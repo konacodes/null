@@ -1,0 +1,293 @@
+-- nullc/parser.null
+-- Parser for the null language, written in null
+-- This is part of the self-hosting compiler
+
+@use "std/io.null"
+@use "std/mem.null"
+@use "std/string.null"
+@use "nullc/lexer.null"
+
+-- AST Node types
+enum NodeKind do
+    -- Declarations
+    NODE_PROGRAM
+    NODE_FN_DECL
+    NODE_STRUCT_DECL
+    NODE_ENUM_DECL
+    NODE_VAR_DECL
+    NODE_PARAM
+    NODE_EXTERN
+
+    -- Statements
+    NODE_BLOCK
+    NODE_RETURN
+    NODE_IF
+    NODE_WHILE
+    NODE_FOR
+    NODE_EXPR_STMT
+    NODE_BREAK
+    NODE_CONTINUE
+
+    -- Expressions
+    NODE_LITERAL_INT
+    NODE_LITERAL_FLOAT
+    NODE_LITERAL_STRING
+    NODE_LITERAL_BOOL
+    NODE_IDENT
+    NODE_BINARY
+    NODE_UNARY
+    NODE_CALL
+    NODE_MEMBER
+    NODE_INDEX
+    NODE_ASSIGN
+    NODE_STRUCT_INIT
+    NODE_ARRAY_INIT
+    NODE_ENUM_VARIANT
+    NODE_CAST
+end
+
+-- Binary operators
+enum BinaryOp do
+    BIN_ADD
+    BIN_SUB
+    BIN_MUL
+    BIN_DIV
+    BIN_MOD
+    BIN_EQ
+    BIN_NE
+    BIN_LT
+    BIN_LE
+    BIN_GT
+    BIN_GE
+    BIN_AND
+    BIN_OR
+    BIN_BIT_AND
+    BIN_BIT_OR
+    BIN_BIT_XOR
+    BIN_LSHIFT
+    BIN_RSHIFT
+end
+
+-- Unary operators
+enum UnaryOp do
+    UN_NEG
+    UN_NOT
+    UN_BIT_NOT
+    UN_ADDR
+    UN_DEREF
+end
+
+-- Type kinds
+enum TypeKind do
+    TYPE_VOID
+    TYPE_BOOL
+    TYPE_I8
+    TYPE_I16
+    TYPE_I32
+    TYPE_I64
+    TYPE_U8
+    TYPE_U16
+    TYPE_U32
+    TYPE_U64
+    TYPE_F32
+    TYPE_F64
+    TYPE_PTR
+    TYPE_ARRAY
+    TYPE_STRUCT
+    TYPE_ENUM
+    TYPE_FN
+end
+
+-- Type representation (simplified)
+-- In a full implementation this would be a tagged union
+struct ASTType do
+    kind :: i64          -- TypeKind enum value
+    name :: ptr<u8>      -- For struct/enum types: type name
+    ptr_to_kind :: i64   -- For ptr<T>: the element type kind
+    ptr_to_name :: ptr<u8> -- For ptr<Struct>: the struct name
+    array_size :: i64    -- For arrays: the size
+end
+
+-- AST Node (simplified - uses fixed fields instead of union)
+struct ASTNode do
+    kind :: i64          -- NodeKind enum value
+    line :: i64          -- Source line number
+    column :: i64        -- Source column number
+
+    -- Data fields - interpretation depends on kind
+    -- For literals:
+    int_value :: i64
+    float_value :: f64
+    string_value :: ptr<u8>
+    bool_value :: bool
+
+    -- For identifiers and names:
+    name :: ptr<u8>
+
+    -- For binary/unary expressions:
+    op :: i64            -- BinaryOp or UnaryOp
+    left :: ptr<ASTNode>
+    right :: ptr<ASTNode>
+    operand :: ptr<ASTNode>
+
+    -- For function calls:
+    callee :: ptr<ASTNode>
+    args :: ptr<ptr<ASTNode>>
+    arg_count :: i64
+
+    -- For function declarations:
+    ret_type :: ptr<ASTType>
+    params :: ptr<ptr<ASTNode>>
+    param_count :: i64
+    body :: ptr<ASTNode>
+
+    -- For var declarations:
+    var_type :: ptr<ASTType>
+    init :: ptr<ASTNode>
+    is_const :: bool
+
+    -- For structs:
+    fields :: ptr<ptr<ASTNode>>
+    field_count :: i64
+
+    -- For blocks:
+    stmts :: ptr<ptr<ASTNode>>
+    stmt_count :: i64
+
+    -- For if statements:
+    condition :: ptr<ASTNode>
+    then_branch :: ptr<ASTNode>
+    else_branch :: ptr<ASTNode>
+
+    -- For loops:
+    loop_var :: ptr<u8>
+    loop_start :: ptr<ASTNode>
+    loop_end :: ptr<ASTNode>
+    loop_body :: ptr<ASTNode>
+end
+
+-- Parser state
+struct Parser do
+    lex :: Lexer
+    current :: Token
+    previous :: Token
+    had_error :: bool
+    panic_mode :: bool
+end
+
+-- Create a new parser
+fn parser_new(source :: ptr<u8>, length :: i64) -> Parser do
+    let lex :: Lexer = lexer_new(source, length)
+
+    -- Get first token
+    let res :: ScanResult = scan_token(lex)
+    let current :: Token = res.tok
+    lex = res.lex
+
+    -- Create empty previous token
+    let zero :: i64 = 0
+    let empty :: ptr<u8> = ""
+    let prev :: Token = Token { tok_type = zero, start = empty, start_offset = zero, length = zero, line = zero, column = zero, int_value = zero }
+
+    let p :: Parser = Parser { lex = lex, current = current, previous = prev, had_error = false, panic_mode = false }
+    ret p
+end
+
+-- Advance to next token
+fn advance(p :: Parser) -> Parser do
+    let new_prev :: Token = p.current
+    let res :: ScanResult = scan_token(p.lex)
+    let new_current :: Token = res.tok
+    let new_lex :: Lexer = res.lex
+
+    let new_p :: Parser = Parser { lex = new_lex, current = new_current, previous = new_prev, had_error = p.had_error, panic_mode = p.panic_mode }
+    ret new_p
+end
+
+-- Check if current token matches type
+fn check(p :: Parser, tok_type :: i64) -> bool do
+    ret p.current.tok_type == tok_type
+end
+
+-- Check if current token matches and advance if so
+struct MatchResult do
+    p :: Parser
+    matched :: bool
+end
+
+fn match_tok(p :: Parser, tok_type :: i64) -> MatchResult do
+    if check(p, tok_type) do
+        let new_p :: Parser = advance(p)
+        let res :: MatchResult = MatchResult { p = new_p, matched = true }
+        ret res
+    end
+    let res :: MatchResult = MatchResult { p = p, matched = false }
+    ret res
+end
+
+-- Report error at current token
+fn error_at_current(p :: Parser, msg :: ptr<u8>) -> Parser do
+    if p.panic_mode do
+        ret p
+    end
+
+    print("Error at line ")
+    print_int(p.current.line)
+    print(": ")
+    print(msg)
+    println()
+
+    let new_p :: Parser = Parser { lex = p.lex, current = p.current, previous = p.previous, had_error = true, panic_mode = true }
+    ret new_p
+end
+
+-- Create a new AST node
+fn make_node(kind :: i64, line :: i64, col :: i64) -> ptr<ASTNode> do
+    -- Allocate memory for the node
+    let size :: u64 = 256  -- Large enough for ASTNode
+    let mem :: ptr<u8> = alloc(size)
+    let node :: ptr<ASTNode> = mem
+
+    -- Zero initialize
+    mem_zero(mem, size)
+
+    -- Set basic fields
+    -- Note: We can't directly set through a pointer in null yet
+    -- This would require implementing pointer dereference assignment
+
+    ret node
+end
+
+-- Simple test function
+fn parser_test() -> i32 do
+    print("Parser module loaded")
+    println()
+
+    let src :: ptr<u8> = "fn main() -> i32 do ret 0 end"
+    let src_len :: i64 = 29
+
+    let p :: Parser = parser_new(src, src_len)
+
+    print("Current token type: ")
+    print_tok_type(p.current.tok_type)
+    println()
+
+    -- Advance a few times
+    p = advance(p)
+    print("After advance: ")
+    print_tok_type(p.current.tok_type)
+    println()
+
+    p = advance(p)
+    print("After advance: ")
+    print_tok_type(p.current.tok_type)
+    println()
+
+    print("parser_test: PASS")
+    println()
+    ret 0
+end
+
+fn main() -> i32 do
+    ret parser_test()
+end

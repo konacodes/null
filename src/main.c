@@ -7,6 +7,8 @@
 #include <libgen.h>
 #include <limits.h>
 #include <dirent.h>
+#include <sys/resource.h>
+#include <signal.h>
 #include "lexer.h"
 #include "parser.h"
 #include "analyzer.h"
@@ -14,6 +16,43 @@
 #include "interp.h"
 
 #define MAX_SOURCE_SIZE (10 * 1024 * 1024)  // 10 MB max source file size
+#define MAX_MEMORY_MB 4096  // 4 GB max memory usage
+#define MAX_CPU_SECONDS 120  // 2 minute max compilation time
+
+// Set resource limits to prevent runaway memory/CPU usage
+static void set_resource_limits(void) {
+    struct rlimit limit;
+
+    // Limit virtual memory to prevent OOM
+    limit.rlim_cur = (rlim_t)MAX_MEMORY_MB * 1024 * 1024;
+    limit.rlim_max = (rlim_t)MAX_MEMORY_MB * 1024 * 1024;
+    if (setrlimit(RLIMIT_AS, &limit) != 0) {
+        // Non-fatal, just warn
+        // fprintf(stderr, "Warning: Could not set memory limit\n");
+    }
+
+    // Limit CPU time to prevent infinite loops
+    limit.rlim_cur = MAX_CPU_SECONDS;
+    limit.rlim_max = MAX_CPU_SECONDS + 10;
+    if (setrlimit(RLIMIT_CPU, &limit) != 0) {
+        // Non-fatal
+    }
+}
+
+// Signal handler for resource limit exceeded
+static void resource_limit_handler(int sig) {
+    if (sig == SIGXCPU) {
+        fprintf(stderr, "\nError: Compilation exceeded CPU time limit (%d seconds)\n", MAX_CPU_SECONDS);
+    } else if (sig == SIGSEGV) {
+        fprintf(stderr, "\nError: Segmentation fault - possible memory corruption or stack overflow\n");
+    }
+    _exit(1);
+}
+
+static void setup_signal_handlers(void) {
+    signal(SIGXCPU, resource_limit_handler);
+    // Don't catch SIGSEGV - let it crash normally for debugging
+}
 
 static char *read_file(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -140,10 +179,19 @@ static char *resolve_module_path(const char *module_path, const char *base_path)
     return resolved;
 }
 
+// Maximum preprocessed output size (50 MB) - prevents runaway memory growth
+#define MAX_PREPROCESSED_SIZE (50 * 1024 * 1024)
+
 // Internal preprocess function - is_toplevel controls whether to add builtin header
 static char *preprocess_internal(const char *source, const char *base_path, bool is_toplevel) {
     size_t source_len = strlen(source);
     size_t capacity = source_len * 4 + 8192;  // Extra space for included modules
+
+    // Sanity check - cap initial allocation
+    if (capacity > MAX_PREPROCESSED_SIZE) {
+        capacity = MAX_PREPROCESSED_SIZE;
+    }
+
     char *result = malloc(capacity);
     if (!result) {
         fprintf(stderr, "Out of memory in preprocessor\n");
@@ -210,6 +258,12 @@ static char *preprocess_internal(const char *source, const char *base_path, bool
                                     // Ensure capacity
                                     while (result_len + module_len + 2 >= capacity) {
                                         capacity *= 2;
+                                        if (capacity > MAX_PREPROCESSED_SIZE) {
+                                            fprintf(stderr, "Error: Preprocessed output exceeds maximum size (%d MB)\n", MAX_PREPROCESSED_SIZE / (1024 * 1024));
+                                            free(result);
+                                            free(processed_module);
+                                            return NULL;
+                                        }
                                         char *new_result = realloc(result, capacity);
                                         if (!new_result) {
                                             free(result);
@@ -239,6 +293,11 @@ static char *preprocess_internal(const char *source, const char *base_path, bool
         // Ensure capacity for next character
         if (result_len + 2 >= capacity) {
             capacity *= 2;
+            if (capacity > MAX_PREPROCESSED_SIZE) {
+                fprintf(stderr, "Error: Preprocessed output exceeds maximum size\n");
+                free(result);
+                return NULL;
+            }
             char *new_result = realloc(result, capacity);
             if (!new_result) {
                 free(result);
@@ -653,6 +712,10 @@ static int compile_to_executable(const char *filename, const char *output) {
 }
 
 int main(int argc, char **argv) {
+    // Set resource limits to prevent runaway memory/CPU usage
+    set_resource_limits();
+    setup_signal_handlers();
+
     if (argc < 2) {
         print_usage(argv[0]);
         return 1;
