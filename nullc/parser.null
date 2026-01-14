@@ -199,6 +199,25 @@ fn parser_new(source :: ptr<u8>, length :: i64) -> Parser do
     ret p
 end
 
+-- Copy token text to a null-terminated string
+fn token_text(tok :: Token) -> ptr<u8> do
+    let src :: ptr<u8> = ptr_add(tok.start, tok.start_offset)
+    let len :: i64 = tok.length
+    -- Allocate buffer with space for null terminator (round up to multiple of 8)
+    let alloc_size :: i64 = ((len + 8) / 8) * 8 + 8
+    let buf :: ptr<u8> = alloc(alloc_size)
+    -- Zero out the buffer first (ensures null termination)
+    let i :: i64 = 0
+    while i < alloc_size do
+        store_i64(ptr_add(buf, i), 0)
+        i = i + 8
+    end
+    -- Copy bytes using memcpy
+    let len_u64 :: u64 = len
+    memcpy(buf, src, len_u64)
+    ret buf
+end
+
 -- Advance to next token
 fn parser_advance(p :: Parser) -> Parser do
     let new_prev :: Token = p.current
@@ -795,7 +814,7 @@ fn parse_var_decl(p :: Parser) -> ParseResult do
         let res :: ParseResult = ParseResult { p = p, node = null_node }
         ret res
     end
-    node_set_name(node, name_tok.start)
+    node_set_name(node, token_text(name_tok))
     p = parser_advance(p)
 
     -- Expect ::
@@ -1035,17 +1054,25 @@ fn parse_block(p :: Parser) -> ParseResult do
             if check.tok_type != TokenType::TOK_EOF do
                 let stmt :: ParseResult = parse_statement(p)
                 p = stmt.p
-                stmts = node_array_push(stmts, stmt.node)
-                -- Recurse for more statements
-                let cont :: ParseResult = parse_block_cont(p, stmts)
-                -- Store stmts in node
+                -- Only push non-null statements
+                let null_check :: ptr<ASTNode> = 0
+                if stmt.node != null_check do
+                    stmts = node_array_push(stmts, stmt.node)
+                end
+                -- Recurse for more statements, passing node to store final stmts
+                let cont :: ParseResult = parse_block_cont(p, stmts, node)
+                p = cont.p
+            else do
+                -- At EOF - store empty stmts
                 let np :: ptr<u8> = node
-                let stmts_dest :: ptr<u8> = ptr_add(np, 176)
-                -- Store NodeArray inline (data, count, capacity)
-                store_ptr(stmts_dest, cont.node)
-                let res :: ParseResult = ParseResult { p = cont.p, node = node }
-                ret res
+                store_ptr(ptr_add(np, 176), stmts.data)
+                store_i64(ptr_add(np, 184), stmts.count)
             end
+        else do
+            -- At END - store empty stmts
+            let np :: ptr<u8> = node
+            store_ptr(ptr_add(np, 176), stmts.data)
+            store_i64(ptr_add(np, 184), stmts.count)
         end
     end
 
@@ -1054,7 +1081,8 @@ fn parse_block(p :: Parser) -> ParseResult do
 end
 
 -- Continue parsing block statements
-fn parse_block_cont(p :: Parser, stmts :: NodeArray) -> ParseResult do
+-- Pass node pointer so we can store final stmts when done
+fn parse_block_cont(p :: Parser, stmts :: NodeArray, node :: ptr<ASTNode>) -> ParseResult do
     let check :: Token = p.current
     if check.tok_type != TokenType::TOK_END do
         if check.tok_type != TokenType::TOK_EOF do
@@ -1064,15 +1092,18 @@ fn parse_block_cont(p :: Parser, stmts :: NodeArray) -> ParseResult do
             let null_check :: ptr<ASTNode> = 0
             if stmt.node != null_check do
                 stmts = node_array_push(stmts, stmt.node)
-                ret parse_block_cont(p, stmts)
             end
+            ret parse_block_cont(p, stmts, node)
         end
     end
 
-    -- Return with stmts array info encoded
-    -- We'll use a dummy node to carry the array back
-    let dummy :: ptr<ASTNode> = stmts.data  -- Abuse: store data ptr
-    let res :: ParseResult = ParseResult { p = p, node = dummy }
+    -- At END or EOF - store stmts to node
+    let np :: ptr<u8> = node
+    store_ptr(ptr_add(np, 176), stmts.data)
+    store_i64(ptr_add(np, 184), stmts.count)
+
+    let null_node :: ptr<ASTNode> = 0
+    let res :: ParseResult = ParseResult { p = p, node = null_node }
     ret res
 end
 
@@ -1089,7 +1120,7 @@ fn parse_fn_decl(p :: Parser) -> ParseResult do
 
     -- Get function name
     let name_tok :: Token = p.current
-    node_set_name(node, name_tok.start)
+    node_set_name(node, token_text(name_tok))
     p = parser_advance(p)
 
     -- Expect (
@@ -1208,7 +1239,7 @@ fn parse_struct_decl(p :: Parser) -> ParseResult do
         let res :: ParseResult = ParseResult { p = p, node = null_node }
         ret res
     end
-    node_set_name(node, name_tok.start)
+    node_set_name(node, token_text(name_tok))
     p = parser_advance(p)
 
     p = consume(p, TokenType::TOK_DO, "Expected do after struct name")
@@ -1277,7 +1308,7 @@ fn parse_enum_decl(p :: Parser) -> ParseResult do
         let res :: ParseResult = ParseResult { p = p, node = null_node }
         ret res
     end
-    node_set_name(node, name_tok.start)
+    node_set_name(node, token_text(name_tok))
     p = parser_advance(p)
 
     p = consume(p, TokenType::TOK_DO, "Expected do after enum name")
@@ -1345,11 +1376,16 @@ fn parse_program(p :: Parser) -> ParseResult do
         if check.tok_type != TokenType::TOK_EOF do
             let decl :: ParseResult = parse_declaration(p)
             p = decl.p
-            decls = node_array_push(decls, decl.node)
-            -- Continue parsing
-            let cont :: ParseResult = parse_program_cont(p, decls)
+            -- Only push non-null nodes (parse_declaration returns null for EOF/newlines)
+            let null_check :: ptr<ASTNode> = 0
+            if decl.node != null_check do
+                decls = node_array_push(decls, decl.node)
+            end
+            -- Continue parsing - pass node so it can store final decls
+            let cont :: ParseResult = parse_program_cont(p, decls, node)
             p = cont.p
-            -- Store decls in node stmts field (NodeArray: data at 160, count at 168)
+        else do
+            -- No declarations - store empty decls
             let np :: ptr<u8> = node
             let data_dest :: ptr<u8> = ptr_add(np, 160)
             store_ptr(data_dest, decls.data)
@@ -1363,16 +1399,28 @@ fn parse_program(p :: Parser) -> ParseResult do
 end
 
 -- Continue parsing program declarations
-fn parse_program_cont(p :: Parser, decls :: NodeArray) -> ParseResult do
+-- Takes node pointer so we can store final decls count when done
+fn parse_program_cont(p :: Parser, decls :: NodeArray, node :: ptr<ASTNode>) -> ParseResult do
     let check :: Token = p.current
     if check.tok_type != TokenType::TOK_EOF do
         if p.had_error == false do
             let decl :: ParseResult = parse_declaration(p)
             p = decl.p
-            decls = node_array_push(decls, decl.node)
-            ret parse_program_cont(p, decls)
+            -- Only push non-null nodes
+            let null_check :: ptr<ASTNode> = 0
+            if decl.node != null_check do
+                decls = node_array_push(decls, decl.node)
+            end
+            ret parse_program_cont(p, decls, node)
         end
     end
+    -- At EOF or error - store final decls to node
+    let np :: ptr<u8> = node
+    let data_dest :: ptr<u8> = ptr_add(np, 160)
+    store_ptr(data_dest, decls.data)
+    let count_dest :: ptr<u8> = ptr_add(np, 168)
+    store_i64(count_dest, decls.count)
+
     let null_node :: ptr<ASTNode> = 0
     let res :: ParseResult = ParseResult { p = p, node = null_node }
     ret res

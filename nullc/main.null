@@ -10,20 +10,78 @@
 @use "nullc/parser.null"
 @use "nullc/codegen.null"
 
+-- Get return value from a return statement
+-- Returns the integer literal value (assumes simple case)
+fn get_return_value(ret_node :: ptr<u8>) -> i64 do
+    -- init (return value) is at offset 152
+    let init :: ptr<u8> = load_ptr(ptr_add(ret_node, 152))
+    let null_ptr :: ptr<u8> = 0
+    if init == null_ptr do
+        ret 0
+    end
+    -- Get int_value from the literal (offset 24)
+    let val :: i64 = load_i64(ptr_add(init, 24))
+    ret val
+end
+
+-- Emit a single statement (only handles return for now)
+fn emit_stmt(cg :: Codegen, stmt :: ptr<u8>) -> Codegen do
+    let kind :: i64 = load_i64(stmt)
+    -- NODE_RETURN = 9
+    if kind == 9 do
+        let val :: i64 = get_return_value(stmt)
+        cg = emit_ret(cg, "i32", val)
+    end
+    ret cg
+end
+
+-- Emit function body statements
+fn emit_body(cg :: Codegen, body :: ptr<u8>) -> Codegen do
+    let null_ptr :: ptr<u8> = 0
+    if body == null_ptr do
+        cg = emit_ret(cg, "i32", 0)
+        ret cg
+    end
+    -- stmts.data at offset 176, stmts.count at offset 184
+    let stmts_data :: ptr<u8> = load_ptr(ptr_add(body, 176))
+    let stmts_count :: i64 = load_i64(ptr_add(body, 184))
+    let i :: i64 = 0
+    while i < stmts_count do
+        let stmt :: ptr<u8> = load_ptr(ptr_add(stmts_data, i * 8))
+        cg = emit_stmt(cg, stmt)
+        i = i + 1
+    end
+    ret cg
+end
+
+-- Helper to emit a single function declaration
+-- This workaround avoids the C compiler bug with load_ptr inside while loops
+fn emit_fn_decl(cg :: Codegen, decl :: ptr<u8>) -> Codegen do
+    -- Get function name from node (offset 56)
+    let name :: ptr<u8> = load_ptr(ptr_add(decl, 56))
+    cg = emit_fn_start(cg, name, "i32")
+    -- Get body (offset 120) and emit statements
+    let body :: ptr<u8> = load_ptr(ptr_add(decl, 120))
+    cg = emit_body(cg, body)
+    cg = emit_fn_end(cg)
+    ret cg
+end
+
 fn codegen_ast(cg :: Codegen, np :: ptr<u8>) -> Codegen do
     cg = emit_module_header(cg)
 
     let count :: i64 = load_i64(ptr_add(np, 168))
     let data :: ptr<u8> = load_ptr(ptr_add(np, 160))
 
-    -- Walk declarations and emit stub functions
-    -- Note: Uses hardcoded "main" name due to compiler bug
+    print("Decl count: ")
+    print_int(count)
+    println()
+
+    -- Walk declarations and emit functions
     let i :: i64 = 0
     while i < count do
         let decl :: ptr<u8> = load_ptr(ptr_add(data, i * 8))
-        cg = emit_fn_start(cg, "main", "i32")
-        cg = emit_ret(cg, "i32", 0)
-        cg = emit_fn_end(cg)
+        cg = emit_fn_decl(cg, decl)
         i = i + 1
     end
 
