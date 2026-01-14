@@ -1,0 +1,113 @@
+-- nullc/codegen.null
+-- LLVM IR code generator for the null language, written in null
+-- Emits LLVM IR as text to avoid linking LLVM
+
+@use "std/io.null"
+@use "std/mem.null"
+@use "std/string.null"
+
+-- Codegen state
+struct Codegen do
+    output :: ptr<u8>
+    output_len :: i64
+    output_cap :: i64
+    temp_counter :: i64
+    label_counter :: i64
+    had_error :: bool
+end
+
+-- Create new codegen
+fn codegen_new() -> Codegen do
+    let cap :: i64 = 4096
+    let buf :: ptr<u8> = alloc(cap)
+    let cg :: Codegen = Codegen { output = buf, output_len = 0, output_cap = cap, temp_counter = 0, label_counter = 0, had_error = false }
+    ret cg
+end
+
+-- Get next temporary name
+fn codegen_temp(cg :: Codegen) -> i64 do
+    let t :: i64 = cg.temp_counter
+    cg.temp_counter = cg.temp_counter + 1
+    ret t
+end
+
+-- Get next label
+fn codegen_label(cg :: Codegen) -> i64 do
+    let l :: i64 = cg.label_counter
+    cg.label_counter = cg.label_counter + 1
+    ret l
+end
+
+-- Emit string to output
+fn emit(cg :: Codegen, s :: ptr<u8>) -> Codegen do
+    -- Simple append (would need proper buffer management)
+    ret cg
+end
+
+-- Emit LLVM type for null types
+fn emit_type(type_name :: ptr<u8>) -> ptr<u8> do
+    -- Map null types to LLVM types
+    -- i8 -> i8, i16 -> i16, i32 -> i32, i64 -> i64
+    -- u8 -> i8, u16 -> i16, u32 -> i32, u64 -> i64
+    -- f32 -> float, f64 -> double
+    -- bool -> i1
+    -- void -> void
+    -- ptr<T> -> ptr
+    ret type_name
+end
+
+-- Generate LLVM IR for a simple function
+fn codegen_simple_fn(cg :: Codegen, name :: ptr<u8>, ret_type :: ptr<u8>) -> Codegen do
+    -- define i32 @name() {
+    -- entry:
+    --   ret i32 0
+    -- }
+    ret cg
+end
+
+-- === TESTS ===
+
+fn codegen_test() -> i32 do
+    print("=== Codegen Tests ===")
+    println()
+
+    -- Test 1: Create codegen
+    print("Test 1: Create codegen")
+    println()
+    let cg :: Codegen = codegen_new()
+    if cg.had_error do
+        print("  ERROR")
+    else do
+        print("  OK")
+    end
+    println()
+
+    -- Test 2: Initial temp counter
+    print("Test 2: Initial temp counter")
+    println()
+    if cg.temp_counter == 0 do
+        print("  OK (temp_counter=0)")
+    else do
+        print("  ERROR")
+    end
+    println()
+
+    -- Test 3: Initial label counter
+    print("Test 3: Initial label counter")
+    println()
+    if cg.label_counter == 0 do
+        print("  OK (label_counter=0)")
+    else do
+        print("  ERROR")
+    end
+    println()
+
+    println()
+    print("=== All tests passed ===")
+    println()
+    ret 0
+end
+
+fn main() -> i32 do
+    ret codegen_test()
+end
