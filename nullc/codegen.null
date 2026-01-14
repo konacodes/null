@@ -529,34 +529,110 @@ fn emit_call_with_str(cg :: Codegen, fn_name :: ptr<u8>, str_id :: i64) -> Codeg
     ret cg
 end
 
--- Emit call with i64 return and one i64 argument (temp)
+-- Emit call with i32 return and one i64 argument (temp), then sign-extend to i64
 fn emit_call_i64_1arg(cg :: Codegen, fn_name :: ptr<u8>, arg_temp :: i64) -> Codegen do
-    let result :: i64 = cg.temp_counter
+    let call_result :: i64 = cg.temp_counter
     cg.temp_counter = cg.temp_counter + 1
     cg = emit_indent(cg)
     cg = emit(cg, "%")
-    cg = emit_int(cg, result)
-    cg = emit(cg, " = call i64 @")
+    cg = emit_int(cg, call_result)
+    cg = emit(cg, " = call i32 @")
     cg = emit(cg, fn_name)
     cg = emit(cg, "(i64 %")
     cg = emit_int(cg, arg_temp)
     cg = emit(cg, ")")
     cg = emit_nl(cg)
-    ret cg
-end
-
--- Emit call with i64 return and one i64 immediate argument
-fn emit_call_i64_1imm(cg :: Codegen, fn_name :: ptr<u8>, arg_val :: i64) -> Codegen do
-    let result :: i64 = cg.temp_counter
+    -- Sign-extend i32 result to i64
+    let ext_result :: i64 = cg.temp_counter
     cg.temp_counter = cg.temp_counter + 1
     cg = emit_indent(cg)
     cg = emit(cg, "%")
-    cg = emit_int(cg, result)
-    cg = emit(cg, " = call i64 @")
+    cg = emit_int(cg, ext_result)
+    cg = emit(cg, " = sext i32 %")
+    cg = emit_int(cg, call_result)
+    cg = emit(cg, " to i64")
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit call with i32 return and one i64 immediate argument, then sign-extend to i64
+fn emit_call_i64_1imm(cg :: Codegen, fn_name :: ptr<u8>, arg_val :: i64) -> Codegen do
+    let call_result :: i64 = cg.temp_counter
+    cg.temp_counter = cg.temp_counter + 1
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, call_result)
+    cg = emit(cg, " = call i32 @")
     cg = emit(cg, fn_name)
     cg = emit(cg, "(i64 ")
     cg = emit_int(cg, arg_val)
     cg = emit(cg, ")")
+    cg = emit_nl(cg)
+    -- Sign-extend i32 result to i64
+    let ext_result :: i64 = cg.temp_counter
+    cg.temp_counter = cg.temp_counter + 1
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, ext_result)
+    cg = emit(cg, " = sext i32 %")
+    cg = emit_int(cg, call_result)
+    cg = emit(cg, " to i64")
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit call with i32 return and two i64 immediate arguments, then sign-extend to i64
+fn emit_call_i64_2imm(cg :: Codegen, fn_name :: ptr<u8>, arg1 :: i64, arg2 :: i64) -> Codegen do
+    let call_result :: i64 = cg.temp_counter
+    cg.temp_counter = cg.temp_counter + 1
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, call_result)
+    cg = emit(cg, " = call i32 @")
+    cg = emit(cg, fn_name)
+    cg = emit(cg, "(i64 ")
+    cg = emit_int(cg, arg1)
+    cg = emit(cg, ", i64 ")
+    cg = emit_int(cg, arg2)
+    cg = emit(cg, ")")
+    cg = emit_nl(cg)
+    -- Sign-extend i32 result to i64
+    let ext_result :: i64 = cg.temp_counter
+    cg.temp_counter = cg.temp_counter + 1
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, ext_result)
+    cg = emit(cg, " = sext i32 %")
+    cg = emit_int(cg, call_result)
+    cg = emit(cg, " to i64")
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit call with i32 return and two i64 temp arguments, then sign-extend to i64
+fn emit_call_i64_2arg(cg :: Codegen, fn_name :: ptr<u8>, arg1 :: i64, arg2 :: i64) -> Codegen do
+    let call_result :: i64 = cg.temp_counter
+    cg.temp_counter = cg.temp_counter + 1
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, call_result)
+    cg = emit(cg, " = call i32 @")
+    cg = emit(cg, fn_name)
+    cg = emit(cg, "(i64 %")
+    cg = emit_int(cg, arg1)
+    cg = emit(cg, ", i64 %")
+    cg = emit_int(cg, arg2)
+    cg = emit(cg, ")")
+    cg = emit_nl(cg)
+    -- Sign-extend i32 result to i64
+    let ext_result :: i64 = cg.temp_counter
+    cg.temp_counter = cg.temp_counter + 1
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, ext_result)
+    cg = emit(cg, " = sext i32 %")
+    cg = emit_int(cg, call_result)
+    cg = emit(cg, " to i64")
     cg = emit_nl(cg)
     ret cg
 end

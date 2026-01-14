@@ -247,8 +247,47 @@ fn emit_expr_val(cg :: Codegen, expr :: ptr<u8>) -> ExprResult do
             let args_data :: ptr<u8> = load_ptr(ptr_add(expr, 104))
             let args_count :: i64 = load_i64(ptr_add(expr, 112))
 
-            if args_count > 0 do
-                -- Get first argument
+            if args_count == 2 do
+                -- Two-argument call
+                let arg0 :: ptr<u8> = load_ptr(args_data)
+                let arg1 :: ptr<u8> = load_ptr(ptr_add(args_data, 8))
+                let arg0_kind :: i64 = load_i64(arg0)
+                let arg1_kind :: i64 = load_i64(arg1)
+
+                -- Check if both are literals
+                if arg0_kind == 16 do
+                    if arg1_kind == 16 do
+                        let val0 :: i64 = load_i64(ptr_add(arg0, 24))
+                        let val1 :: i64 = load_i64(ptr_add(arg1, 24))
+                        cg = emit_call_i64_2imm(cg, name, val0, val1)
+                    else do
+                        -- First is literal, second is expression
+                        let val0 :: i64 = load_i64(ptr_add(arg0, 24))
+                        let arg1_res :: ExprResult = emit_expr_val(cg, arg1)
+                        cg = arg1_res.cg
+                        -- Need mixed call (imm, temp) - for now, load val0 to temp
+                        cg = emit_call_i64_2imm(cg, name, val0, arg1_res.temp)
+                    end
+                else do
+                    -- First is expression
+                    let arg0_res :: ExprResult = emit_expr_val(cg, arg0)
+                    cg = arg0_res.cg
+                    if arg1_kind == 16 do
+                        let val1 :: i64 = load_i64(ptr_add(arg1, 24))
+                        cg = emit_call_i64_2arg(cg, name, arg0_res.temp, val1)
+                    else do
+                        let arg1_res :: ExprResult = emit_expr_val(cg, arg1)
+                        cg = arg1_res.cg
+                        cg = emit_call_i64_2arg(cg, name, arg0_res.temp, arg1_res.temp)
+                    end
+                end
+
+                let call_result :: i64 = get_last_temp(cg)
+                let res :: ExprResult = ExprResult { cg = cg, temp = call_result }
+                ret res
+            end
+            if args_count == 1 do
+                -- Single-argument call
                 let arg0 :: ptr<u8> = load_ptr(args_data)
                 let arg0_kind :: i64 = load_i64(arg0)
 
@@ -266,7 +305,8 @@ fn emit_expr_val(cg :: Codegen, expr :: ptr<u8>) -> ExprResult do
                 let call_result :: i64 = get_last_temp(cg)
                 let res :: ExprResult = ExprResult { cg = cg, temp = call_result }
                 ret res
-            else do
+            end
+            if args_count == 0 do
                 cg = emit_call_void(cg, name)
             end
         end
