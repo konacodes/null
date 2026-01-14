@@ -329,7 +329,9 @@ Each session follows this loop:
 - [x] nullc/codegen.null (LLVM IR emitter framework)
 - [x] nullc/main.null (compiler driver with file I/O)
 - [x] End-to-end pipeline: source -> parse -> codegen -> IR -> executable
-- [ ] AST-driven codegen (currently hardcoded)
+- [x] AST-driven codegen (walks AST, emits per function)
+- Note: Uses hardcoded "main" name due to C compiler bug with
+  loading pointers inside while loops (discovered during debugging)
 
 #### [CURRENTLY HERE] M7: Self-Hosting Complete ✓ when complete
 - [ ] nullc compiles itself
