@@ -4,8 +4,8 @@
 @extern "C" do
     fn puts(s :: ptr<u8>) -> i32
     fn printf(fmt :: ptr<u8>) -> i32
-    fn putchar(c :: i32) -> i32
-    fn getchar() -> i32
+    fn putchar(c :: i64) -> i64
+    fn getchar() -> i64
 end
 
 -- Print a string followed by newline
@@ -18,11 +18,31 @@ fn print_raw(s :: ptr<u8>) -> void do
     printf(s)
 end
 
--- Print an integer
+-- Print an integer (handles negative numbers)
 fn print_int(n :: i64) -> void do
-    -- Simple integer printing via printf
-    -- In a full implementation, we'd format this properly
-    printf("%lld")
+    if n < 0 do
+        putchar(45)
+        n = 0 - n
+    end
+
+    if n == 0 do
+        putchar(48)
+        ret
+    end
+
+    mut temp :: i64 = n
+    mut divisor :: i64 = 1
+    while temp >= 10 do
+        temp = temp / 10
+        divisor = divisor * 10
+    end
+
+    while divisor > 0 do
+        let digit :: i64 = n / divisor
+        putchar(48 + digit)
+        n = n - digit * divisor
+        divisor = divisor / 10
+    end
 end
 
 -- Print a newline
@@ -31,6 +51,6 @@ fn println() -> void do
 end
 
 -- Read a character from stdin
-fn read_char() -> i32 do
+fn read_char() -> i64 do
     ret getchar()
 end

@@ -19,10 +19,74 @@ static void error(Analyzer *a, ASTNode *node, const char *msg) {
     fprintf(stderr, "[%d:%d] Error: %s\n", node->line, node->column, msg);
 }
 
+// Reserved for future use when we need positional errors without a node
 static void error_at(Analyzer *a, int line, int col, const char *msg) {
-    if (a->had_error) return;
-    a->had_error = true;
-    fprintf(stderr, "[%d:%d] Error: %s\n", line, col, msg);
+    (void)a; (void)line; (void)col; (void)msg;  // Suppress unused warnings
+    // if (a->had_error) return;
+    // a->had_error = true;
+    // fprintf(stderr, "[%d:%d] Error: %s\n", line, col, msg);
+}
+
+// Check if a type is numeric (integer or float)
+static bool is_numeric_type(TypeKind kind) {
+    return kind == TYPE_I8 || kind == TYPE_I16 || kind == TYPE_I32 || kind == TYPE_I64 ||
+           kind == TYPE_U8 || kind == TYPE_U16 || kind == TYPE_U32 || kind == TYPE_U64 ||
+           kind == TYPE_F32 || kind == TYPE_F64;
+}
+
+// Check if a type is an integer type
+static bool is_integer_type(TypeKind kind) {
+    return kind == TYPE_I8 || kind == TYPE_I16 || kind == TYPE_I32 || kind == TYPE_I64 ||
+           kind == TYPE_U8 || kind == TYPE_U16 || kind == TYPE_U32 || kind == TYPE_U64;
+}
+
+// Check if two types are compatible for a binary operation
+static bool types_compatible_for_op(Type *left, Type *right, BinaryOp op) {
+    if (!left || !right) return true;  // Unknown types - defer to codegen
+
+    TypeKind lk = left->kind;
+    TypeKind rk = right->kind;
+
+    switch (op) {
+        // Arithmetic operations require numeric types
+        case BIN_ADD:
+        case BIN_SUB:
+        case BIN_MUL:
+        case BIN_DIV:
+            return is_numeric_type(lk) && is_numeric_type(rk);
+
+        // Modulo requires integer types
+        case BIN_MOD:
+            return is_integer_type(lk) && is_integer_type(rk);
+
+        // Comparison can work on any matching types
+        case BIN_EQ:
+        case BIN_NE:
+        case BIN_LT:
+        case BIN_LE:
+        case BIN_GT:
+        case BIN_GE:
+            return lk == rk || (is_numeric_type(lk) && is_numeric_type(rk));
+
+        // Logical operations require booleans
+        case BIN_AND:
+        case BIN_OR:
+            return lk == TYPE_BOOL && rk == TYPE_BOOL;
+
+        // Bitwise operations require integers
+        case BIN_BAND:
+        case BIN_BOR:
+        case BIN_BXOR:
+        case BIN_LSHIFT:
+        case BIN_RSHIFT:
+            return is_integer_type(lk) && is_integer_type(rk);
+
+        case BIN_PIPE:
+            return true;  // Pipe operator has special handling
+
+        default:
+            return true;
+    }
 }
 
 // Scope management
@@ -87,9 +151,48 @@ void symbol_free(Symbol *sym) {
     free(sym);
 }
 
+// Scope tracking for proper cleanup
+typedef struct ScopeList {
+    Scope **scopes;
+    int count;
+    int capacity;
+} ScopeList;
+
+static ScopeList *scope_list = NULL;
+
+static void scope_list_init(void) {
+    if (!scope_list) {
+        scope_list = calloc(1, sizeof(ScopeList));
+        scope_list->capacity = 16;
+        scope_list->scopes = malloc(sizeof(Scope*) * scope_list->capacity);
+        scope_list->count = 0;
+    }
+}
+
+static void scope_list_add(Scope *s) {
+    if (!scope_list) scope_list_init();
+    if (scope_list->count >= scope_list->capacity) {
+        scope_list->capacity *= 2;
+        scope_list->scopes = realloc(scope_list->scopes, sizeof(Scope*) * scope_list->capacity);
+    }
+    scope_list->scopes[scope_list->count++] = s;
+}
+
+static void scope_list_free_all(void) {
+    if (!scope_list) return;
+    for (int i = 0; i < scope_list->count; i++) {
+        scope_free(scope_list->scopes[i]);
+    }
+    free(scope_list->scopes);
+    free(scope_list);
+    scope_list = NULL;
+}
+
 // Analyzer
 void analyzer_init(Analyzer *a) {
+    scope_list_init();
     a->global_scope = scope_new(NULL);
+    scope_list_add(a->global_scope);
     a->current_scope = a->global_scope;
     a->current_fn_ret_type = NULL;
     a->had_error = false;
@@ -97,13 +200,10 @@ void analyzer_init(Analyzer *a) {
 }
 
 void analyzer_free(Analyzer *a) {
-    // Free all scopes starting from global
-    Scope *s = a->global_scope;
-    while (s) {
-        Scope *next = s->parent;  // This will be NULL for global
-        scope_free(s);
-        s = next;
-    }
+    // Free all tracked scopes
+    scope_list_free_all();
+    a->global_scope = NULL;
+    a->current_scope = NULL;
 }
 
 bool analyzer_analyze(Analyzer *a, ASTNode *ast) {
@@ -232,6 +332,7 @@ static void analyze_fn_decl(Analyzer *a, ASTNode *node) {
 
     // Create function scope
     Scope *fn_scope = scope_new(a->current_scope);
+    scope_list_add(fn_scope);
     a->current_scope = fn_scope;
     a->current_fn_ret_type = node->fn_decl.ret_type;
 
@@ -250,7 +351,7 @@ static void analyze_fn_decl(Analyzer *a, ASTNode *node) {
 
     a->current_scope = fn_scope->parent;
     a->current_fn_ret_type = NULL;
-    scope_free(fn_scope);
+    // Don't free scope here - will be freed in analyzer_free
 }
 
 static void analyze_struct_decl(Analyzer *a, ASTNode *node) {
@@ -293,6 +394,7 @@ static void analyze_var_decl(Analyzer *a, ASTNode *node) {
 
 static void analyze_block(Analyzer *a, ASTNode *node) {
     Scope *block_scope = scope_new(a->current_scope);
+    scope_list_add(block_scope);
     a->current_scope = block_scope;
 
     for (int i = 0; i < node->block.stmt_count; i++) {
@@ -300,7 +402,7 @@ static void analyze_block(Analyzer *a, ASTNode *node) {
     }
 
     a->current_scope = block_scope->parent;
-    scope_free(block_scope);
+    // Don't free scope here - will be freed in analyzer_free
 }
 
 static void analyze_stmt(Analyzer *a, ASTNode *node) {
@@ -333,6 +435,7 @@ static void analyze_stmt(Analyzer *a, ASTNode *node) {
         case NODE_FOR: {
             // Create loop scope with iterator variable
             Scope *loop_scope = scope_new(a->current_scope);
+            scope_list_add(loop_scope);
             a->current_scope = loop_scope;
 
             analyze_expr(a, node->for_stmt.start);
@@ -347,7 +450,7 @@ static void analyze_stmt(Analyzer *a, ASTNode *node) {
             analyze_block(a, node->for_stmt.body);
 
             a->current_scope = loop_scope->parent;
-            scope_free(loop_scope);
+            // Don't free scope here - will be freed in analyzer_free
             break;
         }
         case NODE_ASSIGN:
@@ -374,10 +477,19 @@ static void analyze_expr(Analyzer *a, ASTNode *node) {
     if (!node) return;
 
     switch (node->kind) {
-        case NODE_BINARY:
+        case NODE_BINARY: {
             analyze_expr(a, node->binary.left);
             analyze_expr(a, node->binary.right);
+            // Type check the operands
+            Type *left_type = infer_type(a, node->binary.left);
+            Type *right_type = infer_type(a, node->binary.right);
+            if (!types_compatible_for_op(left_type, right_type, node->binary.op)) {
+                error(a, node, "Incompatible types for binary operation.");
+            }
+            type_free(left_type);
+            type_free(right_type);
             break;
+        }
         case NODE_UNARY:
             analyze_expr(a, node->unary.operand);
             break;
@@ -411,10 +523,10 @@ static void analyze_expr(Analyzer *a, ASTNode *node) {
         case NODE_IDENT: {
             Symbol *sym = scope_lookup(a->current_scope, node->ident);
             if (!sym) {
-                // Could be a module name - defer check
-                // char msg[256];
-                // snprintf(msg, sizeof(msg), "Unknown identifier: %s", node->ident);
-                // error(a, node, msg);
+                // Check if it might be a module name (for module.function calls)
+                // Don't error here since it could be resolved later
+                // But mark it for potential warning
+                // For now, just note that we couldn't find it
             }
             break;
         }

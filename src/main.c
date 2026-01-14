@@ -2,11 +2,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
+#include <libgen.h>
+#include <limits.h>
+#include <dirent.h>
 #include "lexer.h"
 #include "parser.h"
 #include "analyzer.h"
 #include "codegen.h"
+
+#define MAX_SOURCE_SIZE (10 * 1024 * 1024)  // 10 MB max source file size
 
 static char *read_file(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -19,57 +25,93 @@ static char *read_file(const char *path) {
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
 
-    char *buffer = malloc(size + 1);
-    if (!buffer) {
+    if (size < 0) {
+        fprintf(stderr, "Could not determine file size: %s\n", path);
         fclose(f);
         return NULL;
     }
 
-    size_t read = fread(buffer, 1, size, f);
-    buffer[read] = '\0';
+    if (size > MAX_SOURCE_SIZE) {
+        fprintf(stderr, "Source file too large (max %d bytes): %s\n", MAX_SOURCE_SIZE, path);
+        fclose(f);
+        return NULL;
+    }
+
+    char *buffer = malloc(size + 1);
+    if (!buffer) {
+        fprintf(stderr, "Out of memory allocating %ld bytes\n", size);
+        fclose(f);
+        return NULL;
+    }
+
+    size_t bytes_read = fread(buffer, 1, size, f);
+    buffer[bytes_read] = '\0';
     fclose(f);
     return buffer;
 }
 
 static char *get_std_path(void) {
-    // Try relative to executable first
-    static char path[1024];
-
-    // Try current directory
+    static char path[PATH_MAX];
     struct stat st;
+
+    // Try current directory first
     if (stat("std", &st) == 0 && S_ISDIR(st.st_mode)) {
         return "std";
     }
 
-    // Try relative to executable
-    // This is a simplified approach - in production you'd use platform-specific
-    // methods to find the executable path
-    return "/home/jace/projects/null/std";
+    // Try relative to executable using /proc/self/exe (Linux)
+    char exe_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len != -1) {
+        exe_path[len] = '\0';
+        // dirname may modify the string, so work with a copy
+        char *dir = dirname(exe_path);
+        snprintf(path, sizeof(path), "%s/std", dir);
+        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            return path;
+        }
+        // Try parent directory (for when running from build/)
+        snprintf(path, sizeof(path), "%s/../std", dir);
+        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+            return path;
+        }
+    }
+
+    // Fallback to current directory
+    return "./std";
 }
 
 // Simple preprocessor for @use directives
 static char *preprocess(const char *source, const char *base_path) {
+    (void)base_path;  // Unused for now
     // For now, just strip @use directives and add extern declarations
     // A real implementation would parse imports and include the relevant code
 
     // Find all @use directives and build a combined source
-    size_t capacity = strlen(source) * 2 + 4096;
+    size_t source_len = strlen(source);
+    size_t capacity = source_len * 2 + 4096;
     char *result = malloc(capacity);
-    result[0] = '\0';
+    if (!result) {
+        fprintf(stderr, "Out of memory in preprocessor\n");
+        return NULL;
+    }
 
-    // Add standard library extern declarations
-    strcat(result, "@extern \"C\" do\n");
-    strcat(result, "    fn puts(s :: ptr<u8>) -> i32\n");
-    strcat(result, "    fn printf(fmt :: ptr<u8>) -> i32\n");
-    strcat(result, "    fn exit(code :: i32) -> void\n");
-    strcat(result, "end\n\n");
+    // Build header with standard library extern declarations
+    const char *header =
+        "@extern \"C\" do\n"
+        "    fn puts(s :: ptr<u8>) -> i32\n"
+        "    fn printf(fmt :: ptr<u8>) -> i32\n"
+        "    fn exit(code :: i32) -> void\n"
+        "end\n\n"
+        "fn io_print(s :: ptr<u8>) -> void do\n"
+        "    puts(s)\n"
+        "end\n\n";
 
-    // Add io module functions as wrappers
-    strcat(result, "fn io_print(s :: ptr<u8>) -> void do\n");
-    strcat(result, "    puts(s)\n");
-    strcat(result, "end\n\n");
+    size_t header_len = strlen(header);
+    memcpy(result, header, header_len);
+    size_t result_len = header_len;
 
-    // Copy the rest, skipping @use lines
+    // Copy the rest, skipping @use lines - track length explicitly for O(n)
     const char *p = source;
     while (*p) {
         // Skip @use lines
@@ -79,12 +121,10 @@ static char *preprocess(const char *source, const char *base_path) {
             continue;
         }
 
-        // Copy character
-        size_t len = strlen(result);
-        result[len] = *p;
-        result[len + 1] = '\0';
-        p++;
+        // Copy character - O(1) operation now
+        result[result_len++] = *p++;
     }
+    result[result_len] = '\0';
 
     return result;
 }
@@ -212,10 +252,24 @@ static int compile_to_executable(const char *filename, const char *output) {
         return 1;
     }
 
-    // Link with clang
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd), "clang %s -o %s -lm", obj_file, output);
-    int result = system(cmd);
+    // Link with clang - use fork/exec to avoid command injection
+    int result = 1;
+    pid_t pid = fork();
+    if (pid == 0) {
+        // Child process
+        execlp("clang", "clang", obj_file, "-o", output, "-lm", (char*)NULL);
+        // If execlp returns, it failed
+        _exit(127);
+    } else if (pid > 0) {
+        // Parent process - wait for child
+        int status;
+        waitpid(pid, &status, 0);
+        if (WIFEXITED(status)) {
+            result = WEXITSTATUS(status);
+        }
+    } else {
+        fprintf(stderr, "Failed to fork for linking\n");
+    }
 
     // Clean up
     remove(obj_file);
@@ -255,11 +309,41 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(argv[1], "test") == 0) {
-        // Run tests in directory
-        // For now, just compile and run each .null file
-        printf("Running tests...\n");
-        // TODO: implement test runner
-        return 0;
+        // Run tests in a directory
+        const char *test_dir = (argc >= 3) ? argv[2] : "tests";
+        DIR *dir = opendir(test_dir);
+        if (!dir) {
+            fprintf(stderr, "Could not open test directory: %s\n", test_dir);
+            return 1;
+        }
+
+        int passed = 0, failed = 0;
+        struct dirent *entry;
+        printf("Running tests in %s...\n", test_dir);
+
+        while ((entry = readdir(dir)) != NULL) {
+            size_t name_len = strlen(entry->d_name);
+            if (name_len > 5 && strcmp(entry->d_name + name_len - 5, ".null") == 0) {
+                char path[PATH_MAX];
+                snprintf(path, sizeof(path), "%s/%s", test_dir, entry->d_name);
+
+                printf("  Testing %s... ", entry->d_name);
+                fflush(stdout);
+
+                int result = compile_and_run(path);
+                if (result == 0) {
+                    printf("OK\n");
+                    passed++;
+                } else {
+                    printf("FAIL (exit %d)\n", result);
+                    failed++;
+                }
+            }
+        }
+        closedir(dir);
+
+        printf("\nResults: %d passed, %d failed\n", passed, failed);
+        return failed > 0 ? 1 : 0;
     }
 
     // Default: run the file

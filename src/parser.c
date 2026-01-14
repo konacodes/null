@@ -2,14 +2,66 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <limits.h>
 
 // Memory helpers
 static char *str_dup(const char *s, size_t len) {
     char *d = malloc(len + 1);
+    if (!d) {
+        fprintf(stderr, "Out of memory\n");
+        exit(1);
+    }
     memcpy(d, s, len);
     d[len] = '\0';
     return d;
 }
+
+// Duplicate string with escape sequence interpretation
+static char *str_dup_unescape(const char *s, size_t len) {
+    char *d = malloc(len + 1);
+    if (!d) {
+        fprintf(stderr, "Out of memory\n");
+        exit(1);
+    }
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (s[i] == '\\' && i + 1 < len) {
+            i++;
+            switch (s[i]) {
+                case 'n':  d[j++] = '\n'; break;
+                case 't':  d[j++] = '\t'; break;
+                case 'r':  d[j++] = '\r'; break;
+                case '\\': d[j++] = '\\'; break;
+                case '"':  d[j++] = '"';  break;
+                case '0':  d[j++] = '\0'; break;
+                default:   d[j++] = s[i]; break;  // Unknown escape, keep as-is
+            }
+        } else {
+            d[j++] = s[i];
+        }
+    }
+    d[j] = '\0';
+    return d;
+}
+
+// Safe realloc helper - exits on failure
+static void *safe_realloc(void *ptr, size_t size) {
+    void *new_ptr = realloc(ptr, size);
+    if (!new_ptr && size > 0) {
+        fprintf(stderr, "Out of memory\n");
+        exit(1);
+    }
+    return new_ptr;
+}
+
+// Ensure array has capacity for one more element (geometric growth)
+#define ENSURE_CAPACITY(arr, count, capacity, type) do { \
+    if ((count) >= (capacity)) { \
+        (capacity) = (capacity) ? (capacity) * 2 : 8; \
+        (arr) = safe_realloc((arr), sizeof(type) * (capacity)); \
+    } \
+} while(0)
 
 // Type utilities
 Type *type_new(TypeKind kind) {
@@ -29,6 +81,33 @@ Type *type_clone(Type *t) {
         case TYPE_SLICE:
             c->array.elem_type = type_clone(t->array.elem_type);
             c->array.size = t->array.size;
+            break;
+        case TYPE_STRUCT:
+            c->struct_t.name = t->struct_t.name ? strdup(t->struct_t.name) : NULL;
+            c->struct_t.field_count = t->struct_t.field_count;
+            if (t->struct_t.field_count > 0) {
+                c->struct_t.field_names = malloc(sizeof(char*) * t->struct_t.field_count);
+                c->struct_t.field_types = malloc(sizeof(Type*) * t->struct_t.field_count);
+                for (int i = 0; i < t->struct_t.field_count; i++) {
+                    c->struct_t.field_names[i] = strdup(t->struct_t.field_names[i]);
+                    c->struct_t.field_types[i] = type_clone(t->struct_t.field_types[i]);
+                }
+            } else {
+                c->struct_t.field_names = NULL;
+                c->struct_t.field_types = NULL;
+            }
+            break;
+        case TYPE_FN:
+            c->fn.ret_type = type_clone(t->fn.ret_type);
+            c->fn.param_count = t->fn.param_count;
+            if (t->fn.param_count > 0) {
+                c->fn.param_types = malloc(sizeof(Type*) * t->fn.param_count);
+                for (int i = 0; i < t->fn.param_count; i++) {
+                    c->fn.param_types[i] = type_clone(t->fn.param_types[i]);
+                }
+            } else {
+                c->fn.param_types = NULL;
+            }
             break;
         default:
             break;
@@ -377,10 +456,9 @@ ASTNode *parser_parse(Parser *parser) {
     while (!check(parser, TOK_EOF)) {
         ASTNode *decl = parse_decl(parser);
         if (decl) {
-            program->program.decl_count++;
-            program->program.decls = realloc(program->program.decls,
-                sizeof(ASTNode*) * program->program.decl_count);
-            program->program.decls[program->program.decl_count - 1] = decl;
+            ENSURE_CAPACITY(program->program.decls, program->program.decl_count,
+                program->program.decl_capacity, ASTNode*);
+            program->program.decls[program->program.decl_count++] = decl;
         }
         skip_newlines(parser);
     }
@@ -441,7 +519,7 @@ static ASTNode *parse_extern(Parser *p) {
         if (fn) {
             fn->fn_decl.is_extern = true;
             node->extern_decl.fn_count++;
-            node->extern_decl.fn_decls = realloc(node->extern_decl.fn_decls,
+            node->extern_decl.fn_decls = safe_realloc(node->extern_decl.fn_decls,
                 sizeof(ASTNode*) * node->extern_decl.fn_count);
             node->extern_decl.fn_decls[node->extern_decl.fn_count - 1] = fn;
         }
@@ -473,10 +551,9 @@ static ASTNode *parse_fn_decl(Parser *p) {
             consume(p, TOK_COLONCOLON, "Expected '::' before parameter type.");
             param->param.param_type = parse_type(p);
 
-            node->fn_decl.param_count++;
-            node->fn_decl.params = realloc(node->fn_decl.params,
-                sizeof(ASTNode*) * node->fn_decl.param_count);
-            node->fn_decl.params[node->fn_decl.param_count - 1] = param;
+            ENSURE_CAPACITY(node->fn_decl.params, node->fn_decl.param_count,
+                node->fn_decl.param_capacity, ASTNode*);
+            node->fn_decl.params[node->fn_decl.param_count++] = param;
         } while (match(p, TOK_COMMA));
     }
 
@@ -520,9 +597,9 @@ static ASTNode *parse_struct_decl(Parser *p) {
         Type *field_type = parse_type(p);
 
         node->struct_decl.field_count++;
-        node->struct_decl.field_names = realloc(node->struct_decl.field_names,
+        node->struct_decl.field_names = safe_realloc(node->struct_decl.field_names,
             sizeof(char*) * node->struct_decl.field_count);
-        node->struct_decl.field_types = realloc(node->struct_decl.field_types,
+        node->struct_decl.field_types = safe_realloc(node->struct_decl.field_types,
             sizeof(Type*) * node->struct_decl.field_count);
         node->struct_decl.field_names[node->struct_decl.field_count - 1] = field_name;
         node->struct_decl.field_types[node->struct_decl.field_count - 1] = field_type;
@@ -585,6 +662,11 @@ static Type *parse_type(Parser *p) {
         Type *elem = parse_type(p);
         if (match(p, TOK_SEMICOLON)) {
             consume(p, TOK_INT_LIT, "Expected array size.");
+            if (p->previous.int_value < 0 || p->previous.int_value > INT32_MAX) {
+                error_at(p, &p->previous, "Array size out of range.");
+                type_free(elem);
+                return type_new(TYPE_UNKNOWN);
+            }
             int size = (int)p->previous.int_value;
             consume(p, TOK_RBRACKET, "Expected ']'.");
             Type *t = type_new(TYPE_ARRAY);
@@ -624,10 +706,9 @@ static ASTNode *parse_block(Parser *p) {
            !check(p, TOK_ELSE) && !check(p, TOK_EOF)) {
         ASTNode *stmt = parse_stmt(p);
         if (stmt) {
-            node->block.stmt_count++;
-            node->block.stmts = realloc(node->block.stmts,
-                sizeof(ASTNode*) * node->block.stmt_count);
-            node->block.stmts[node->block.stmt_count - 1] = stmt;
+            ENSURE_CAPACITY(node->block.stmts, node->block.stmt_count,
+                node->block.stmt_capacity, ASTNode*);
+            node->block.stmts[node->block.stmt_count++] = stmt;
         }
         skip_newlines(p);
     }
@@ -691,12 +772,11 @@ static ASTNode *parse_if(Parser *p) {
            !check(p, TOK_ELSE) && !check(p, TOK_EOF)) {
         ASTNode *stmt = parse_stmt(p);
         if (stmt) {
-            node->if_stmt.then_block->block.stmt_count++;
-            node->if_stmt.then_block->block.stmts = realloc(
-                node->if_stmt.then_block->block.stmts,
-                sizeof(ASTNode*) * node->if_stmt.then_block->block.stmt_count);
+            ENSURE_CAPACITY(node->if_stmt.then_block->block.stmts,
+                node->if_stmt.then_block->block.stmt_count,
+                node->if_stmt.then_block->block.stmt_capacity, ASTNode*);
             node->if_stmt.then_block->block.stmts[
-                node->if_stmt.then_block->block.stmt_count - 1] = stmt;
+                node->if_stmt.then_block->block.stmt_count++] = stmt;
         }
         skip_newlines(p);
     }
@@ -719,18 +799,17 @@ static ASTNode *parse_if(Parser *p) {
                !check(p, TOK_ELSE) && !check(p, TOK_EOF)) {
             ASTNode *stmt = parse_stmt(p);
             if (stmt) {
-                elif_block->block.stmt_count++;
-                elif_block->block.stmts = realloc(elif_block->block.stmts,
-                    sizeof(ASTNode*) * elif_block->block.stmt_count);
-                elif_block->block.stmts[elif_block->block.stmt_count - 1] = stmt;
+                ENSURE_CAPACITY(elif_block->block.stmts, elif_block->block.stmt_count,
+                    elif_block->block.stmt_capacity, ASTNode*);
+                elif_block->block.stmts[elif_block->block.stmt_count++] = stmt;
             }
             skip_newlines(p);
         }
 
         node->if_stmt.elif_count++;
-        node->if_stmt.elif_conds = realloc(node->if_stmt.elif_conds,
+        node->if_stmt.elif_conds = safe_realloc(node->if_stmt.elif_conds,
             sizeof(ASTNode*) * node->if_stmt.elif_count);
-        node->if_stmt.elif_blocks = realloc(node->if_stmt.elif_blocks,
+        node->if_stmt.elif_blocks = safe_realloc(node->if_stmt.elif_blocks,
             sizeof(ASTNode*) * node->if_stmt.elif_count);
         node->if_stmt.elif_conds[node->if_stmt.elif_count - 1] = elif_cond;
         node->if_stmt.elif_blocks[node->if_stmt.elif_count - 1] = elif_block;
@@ -748,12 +827,11 @@ static ASTNode *parse_if(Parser *p) {
         while (!check(p, TOK_END) && !check(p, TOK_EOF)) {
             ASTNode *stmt = parse_stmt(p);
             if (stmt) {
-                node->if_stmt.else_block->block.stmt_count++;
-                node->if_stmt.else_block->block.stmts = realloc(
-                    node->if_stmt.else_block->block.stmts,
-                    sizeof(ASTNode*) * node->if_stmt.else_block->block.stmt_count);
+                ENSURE_CAPACITY(node->if_stmt.else_block->block.stmts,
+                    node->if_stmt.else_block->block.stmt_count,
+                    node->if_stmt.else_block->block.stmt_capacity, ASTNode*);
                 node->if_stmt.else_block->block.stmts[
-                    node->if_stmt.else_block->block.stmt_count - 1] = stmt;
+                    node->if_stmt.else_block->block.stmt_count++] = stmt;
             }
             skip_newlines(p);
         }
@@ -1044,7 +1122,7 @@ static ASTNode *parse_postfix(Parser *p) {
                 do {
                     ASTNode *arg = parse_expr(p);
                     call->call.arg_count++;
-                    call->call.args = realloc(call->call.args,
+                    call->call.args = safe_realloc(call->call.args,
                         sizeof(ASTNode*) * call->call.arg_count);
                     call->call.args[call->call.arg_count - 1] = arg;
                 } while (match(p, TOK_COMMA));
@@ -1099,8 +1177,8 @@ static ASTNode *parse_primary(Parser *p) {
 
     if (match(p, TOK_STRING_LIT)) {
         ASTNode *node = ast_new(NODE_LITERAL_STRING, p->previous.line, p->previous.column);
-        // Remove quotes
-        node->string_val = str_dup(p->previous.start + 1, p->previous.length - 2);
+        // Remove quotes and interpret escape sequences
+        node->string_val = str_dup_unescape(p->previous.start + 1, p->previous.length - 2);
         return node;
     }
 
@@ -1136,9 +1214,9 @@ static ASTNode *parse_primary(Parser *p) {
                     ASTNode *field_value = parse_expr(p);
 
                     node->struct_init.field_count++;
-                    node->struct_init.field_names = realloc(node->struct_init.field_names,
+                    node->struct_init.field_names = safe_realloc(node->struct_init.field_names,
                         sizeof(char*) * node->struct_init.field_count);
-                    node->struct_init.field_values = realloc(node->struct_init.field_values,
+                    node->struct_init.field_values = safe_realloc(node->struct_init.field_values,
                         sizeof(ASTNode*) * node->struct_init.field_count);
                     node->struct_init.field_names[node->struct_init.field_count - 1] = field_name;
                     node->struct_init.field_values[node->struct_init.field_count - 1] = field_value;
@@ -1170,7 +1248,7 @@ static ASTNode *parse_primary(Parser *p) {
             do {
                 ASTNode *elem = parse_expr(p);
                 node->array_init.elem_count++;
-                node->array_init.elements = realloc(node->array_init.elements,
+                node->array_init.elements = safe_realloc(node->array_init.elements,
                     sizeof(ASTNode*) * node->array_init.elem_count);
                 node->array_init.elements[node->array_init.elem_count - 1] = elem;
             } while (match(p, TOK_COMMA));

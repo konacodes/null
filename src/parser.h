@@ -135,6 +135,7 @@ struct ASTNode {
         struct {
             ASTNode **decls;
             int decl_count;
+            int decl_capacity;
         } program;
 
         // NODE_FN_DECL
@@ -142,6 +143,7 @@ struct ASTNode {
             char *name;
             ASTNode **params;
             int param_count;
+            int param_capacity;
             Type *ret_type;
             ASTNode *body;
             bool is_extern;
@@ -173,6 +175,7 @@ struct ASTNode {
         struct {
             ASTNode **stmts;
             int stmt_count;
+            int stmt_capacity;
         } block;
 
         // NODE_RETURN

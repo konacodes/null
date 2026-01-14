@@ -68,7 +68,12 @@ static StructDef *find_struct_def(Codegen *cg, const char *name) {
 
 static void register_struct(Codegen *cg, ASTNode *node) {
     cg->struct_count++;
-    cg->structs = realloc(cg->structs, sizeof(StructDef) * cg->struct_count);
+    void *new_ptr = realloc(cg->structs, sizeof(StructDef) * cg->struct_count);
+    if (!new_ptr) {
+        fprintf(stderr, "Out of memory registering struct\n");
+        exit(1);
+    }
+    cg->structs = new_ptr;
     StructDef *def = &cg->structs[cg->struct_count - 1];
     def->name = strdup(node->struct_decl.name);
     def->field_count = node->struct_decl.field_count;
@@ -132,6 +137,21 @@ void codegen_free(Codegen *cg) {
         CGScope *next = s->parent;
         cgscope_free(s);
         s = next;
+    }
+
+    // Free struct registry
+    if (cg->structs) {
+        for (int i = 0; i < cg->struct_count; i++) {
+            free(cg->structs[i].name);
+            for (int j = 0; j < cg->structs[i].field_count; j++) {
+                free(cg->structs[i].field_names[j]);
+            }
+            free(cg->structs[i].field_names);
+            free(cg->structs[i].field_types);
+        }
+        free(cg->structs);
+        cg->structs = NULL;
+        cg->struct_count = 0;
     }
 }
 
@@ -263,7 +283,6 @@ static void codegen_fn_decl(Codegen *cg, ASTNode *node) {
     free(param_types);
 
     // Verify function
-    char *err = NULL;
     if (LLVMVerifyFunction(fn, LLVMPrintMessageAction)) {
         fprintf(stderr, "Function verification failed for %s\n", node->fn_decl.name);
     }
@@ -506,10 +525,52 @@ static void codegen_stmt(Codegen *cg, ASTNode *node) {
                 }
             } else if (node->assign.target->kind == NODE_MEMBER) {
                 // Struct member assignment
-                // TODO: implement
+                ASTNode *member = node->assign.target;
+                if (member->member.object->kind == NODE_IDENT) {
+                    CGSymbol *sym = cgscope_lookup(cg->current_scope, member->member.object->ident);
+                    if (sym && sym->type && sym->type->kind == TYPE_STRUCT && sym->is_ptr) {
+                        const char *struct_name = sym->type->struct_t.name;
+                        StructDef *def = find_struct_def(cg, struct_name);
+                        if (def) {
+                            // Find field index
+                            int field_idx = -1;
+                            for (int i = 0; i < def->field_count; i++) {
+                                if (strcmp(def->field_names[i], member->member.member) == 0) {
+                                    field_idx = i;
+                                    break;
+                                }
+                            }
+                            if (field_idx >= 0) {
+                                LLVMTypeRef llvm_struct = LLVMGetTypeByName2(cg->context, struct_name);
+                                if (llvm_struct) {
+                                    LLVMValueRef field_ptr = LLVMBuildStructGEP2(
+                                        cg->builder, llvm_struct, sym->value, field_idx, "field_ptr");
+                                    LLVMBuildStore(cg->builder, val, field_ptr);
+                                }
+                            } else {
+                                char msg[256];
+                                snprintf(msg, sizeof(msg), "Unknown field: %s", member->member.member);
+                                error(cg, msg);
+                            }
+                        }
+                    }
+                }
             } else if (node->assign.target->kind == NODE_INDEX) {
                 // Array index assignment
-                // TODO: implement
+                ASTNode *index_node = node->assign.target;
+                if (index_node->index.object->kind == NODE_IDENT) {
+                    CGSymbol *sym = cgscope_lookup(cg->current_scope, index_node->index.object->ident);
+                    if (sym && sym->is_ptr && sym->type && sym->type->kind == TYPE_ARRAY) {
+                        LLVMValueRef idx = codegen_expr(cg, index_node->index.index);
+                        LLVMTypeRef arr_type = type_to_llvm(cg, sym->type);
+                        LLVMValueRef indices[2] = {
+                            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
+                            idx
+                        };
+                        LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, arr_type, sym->value, indices, 2, "elem_ptr");
+                        LLVMBuildStore(cg->builder, val, elem_ptr);
+                    }
+                }
             }
             break;
         }
@@ -535,7 +596,6 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
 
         case NODE_LITERAL_STRING: {
             // Create global string constant
-            size_t len = strlen(node->string_val);
             LLVMValueRef str = LLVMBuildGlobalStringPtr(cg->builder, node->string_val, "str");
             return str;
         }
@@ -558,6 +618,58 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
         }
 
         case NODE_BINARY: {
+            // Handle short-circuit evaluation for logical AND/OR
+            if (node->binary.op == BIN_AND) {
+                // Short-circuit AND: if left is false, skip right
+                LLVMValueRef left = codegen_expr(cg, node->binary.left);
+                LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(cg->builder));
+                LLVMBasicBlockRef left_bb = LLVMGetInsertBlock(cg->builder);
+                LLVMBasicBlockRef right_bb = LLVMAppendBasicBlockInContext(cg->context, fn, "and_right");
+                LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(cg->context, fn, "and_merge");
+
+                LLVMBuildCondBr(cg->builder, left, right_bb, merge_bb);
+
+                // Evaluate right side only if left was true
+                LLVMPositionBuilderAtEnd(cg->builder, right_bb);
+                LLVMValueRef right = codegen_expr(cg, node->binary.right);
+                LLVMBasicBlockRef right_end_bb = LLVMGetInsertBlock(cg->builder);
+                LLVMBuildBr(cg->builder, merge_bb);
+
+                // Merge with phi node
+                LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+                LLVMValueRef phi = LLVMBuildPhi(cg->builder, LLVMInt1TypeInContext(cg->context), "and_result");
+                LLVMValueRef false_val = LLVMConstInt(LLVMInt1TypeInContext(cg->context), 0, 0);
+                LLVMAddIncoming(phi, &false_val, &left_bb, 1);
+                LLVMAddIncoming(phi, &right, &right_end_bb, 1);
+                return phi;
+            }
+
+            if (node->binary.op == BIN_OR) {
+                // Short-circuit OR: if left is true, skip right
+                LLVMValueRef left = codegen_expr(cg, node->binary.left);
+                LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(cg->builder));
+                LLVMBasicBlockRef left_bb = LLVMGetInsertBlock(cg->builder);
+                LLVMBasicBlockRef right_bb = LLVMAppendBasicBlockInContext(cg->context, fn, "or_right");
+                LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(cg->context, fn, "or_merge");
+
+                LLVMBuildCondBr(cg->builder, left, merge_bb, right_bb);
+
+                // Evaluate right side only if left was false
+                LLVMPositionBuilderAtEnd(cg->builder, right_bb);
+                LLVMValueRef right = codegen_expr(cg, node->binary.right);
+                LLVMBasicBlockRef right_end_bb = LLVMGetInsertBlock(cg->builder);
+                LLVMBuildBr(cg->builder, merge_bb);
+
+                // Merge with phi node
+                LLVMPositionBuilderAtEnd(cg->builder, merge_bb);
+                LLVMValueRef phi = LLVMBuildPhi(cg->builder, LLVMInt1TypeInContext(cg->context), "or_result");
+                LLVMValueRef true_val = LLVMConstInt(LLVMInt1TypeInContext(cg->context), 1, 0);
+                LLVMAddIncoming(phi, &true_val, &left_bb, 1);
+                LLVMAddIncoming(phi, &right, &right_end_bb, 1);
+                return phi;
+            }
+
+            // Non-short-circuit operators - evaluate both sides
             LLVMValueRef left = codegen_expr(cg, node->binary.left);
             LLVMValueRef right = codegen_expr(cg, node->binary.right);
 
@@ -599,9 +711,9 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
                     return is_float ? LLVMBuildFCmp(cg->builder, LLVMRealOGE, left, right, "fge")
                                    : LLVMBuildICmp(cg->builder, LLVMIntSGE, left, right, "ge");
                 case BIN_AND:
-                    return LLVMBuildAnd(cg->builder, left, right, "and");
                 case BIN_OR:
-                    return LLVMBuildOr(cg->builder, left, right, "or");
+                    // Already handled above with short-circuit
+                    return left;
                 case BIN_BAND:
                     return LLVMBuildAnd(cg->builder, left, right, "band");
                 case BIN_BOR:
@@ -753,6 +865,49 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
                 if (sym && sym->is_ptr) {
                     LLVMBuildStore(cg->builder, val, sym->value);
                 }
+            } else if (node->assign.target->kind == NODE_MEMBER) {
+                // Struct member assignment in expression context
+                ASTNode *member = node->assign.target;
+                if (member->member.object->kind == NODE_IDENT) {
+                    CGSymbol *sym = cgscope_lookup(cg->current_scope, member->member.object->ident);
+                    if (sym && sym->type && sym->type->kind == TYPE_STRUCT && sym->is_ptr) {
+                        const char *struct_name = sym->type->struct_t.name;
+                        StructDef *def = find_struct_def(cg, struct_name);
+                        if (def) {
+                            int field_idx = -1;
+                            for (int i = 0; i < def->field_count; i++) {
+                                if (strcmp(def->field_names[i], member->member.member) == 0) {
+                                    field_idx = i;
+                                    break;
+                                }
+                            }
+                            if (field_idx >= 0) {
+                                LLVMTypeRef llvm_struct = LLVMGetTypeByName2(cg->context, struct_name);
+                                if (llvm_struct) {
+                                    LLVMValueRef field_ptr = LLVMBuildStructGEP2(
+                                        cg->builder, llvm_struct, sym->value, field_idx, "field_ptr");
+                                    LLVMBuildStore(cg->builder, val, field_ptr);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (node->assign.target->kind == NODE_INDEX) {
+                // Array index assignment in expression context
+                ASTNode *index_node = node->assign.target;
+                if (index_node->index.object->kind == NODE_IDENT) {
+                    CGSymbol *sym = cgscope_lookup(cg->current_scope, index_node->index.object->ident);
+                    if (sym && sym->is_ptr && sym->type && sym->type->kind == TYPE_ARRAY) {
+                        LLVMValueRef idx = codegen_expr(cg, index_node->index.index);
+                        LLVMTypeRef arr_type = type_to_llvm(cg, sym->type);
+                        LLVMValueRef indices[2] = {
+                            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
+                            idx
+                        };
+                        LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, arr_type, sym->value, indices, 2, "elem_ptr");
+                        LLVMBuildStore(cg->builder, val, elem_ptr);
+                    }
+                }
             }
             return val;
         }
@@ -765,14 +920,38 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
                 return LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0);
             }
 
+            // Get struct definition for proper field ordering
+            StructDef *def = find_struct_def(cg, node->struct_init.struct_name);
+            if (!def) {
+                error(cg, "Struct definition not found");
+                return LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0);
+            }
+
             // Allocate struct
             LLVMValueRef alloca = LLVMBuildAlloca(cg->builder, struct_type, "struct_tmp");
 
-            // Initialize fields
+            // Initialize fields - look up actual field index by name
             for (int i = 0; i < node->struct_init.field_count; i++) {
-                LLVMValueRef field_ptr = LLVMBuildStructGEP2(cg->builder, struct_type, alloca, i, "field_ptr");
-                LLVMValueRef field_val = codegen_expr(cg, node->struct_init.field_values[i]);
-                LLVMBuildStore(cg->builder, field_val, field_ptr);
+                const char *init_field_name = node->struct_init.field_names[i];
+                int field_idx = -1;
+
+                // Find the actual index of this field in the struct definition
+                for (int j = 0; j < def->field_count; j++) {
+                    if (strcmp(def->field_names[j], init_field_name) == 0) {
+                        field_idx = j;
+                        break;
+                    }
+                }
+
+                if (field_idx >= 0) {
+                    LLVMValueRef field_ptr = LLVMBuildStructGEP2(cg->builder, struct_type, alloca, field_idx, "field_ptr");
+                    LLVMValueRef field_val = codegen_expr(cg, node->struct_init.field_values[i]);
+                    LLVMBuildStore(cg->builder, field_val, field_ptr);
+                } else {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Unknown field in struct initializer: %s", init_field_name);
+                    error(cg, msg);
+                }
             }
 
             return LLVMBuildLoad2(cg->builder, struct_type, alloca, "struct_val");

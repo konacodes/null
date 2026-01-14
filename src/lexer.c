@@ -52,13 +52,16 @@ static void skip_whitespace(Lexer *lexer) {
                 // -- comment
                 if (peek_next(lexer) == '-') {
                     // Check for multi-line comment ---
-                    if (lexer->current[2] == '-') {
+                    // Safe bounds check: ensure we have at least 3 characters
+                    if (lexer->current[1] != '\0' && lexer->current[2] != '\0' && lexer->current[2] == '-') {
                         advance(lexer); // -
                         advance(lexer); // -
                         advance(lexer); // -
                         // Find closing ---
                         while (!is_at_end(lexer)) {
-                            if (peek(lexer) == '-' && peek_next(lexer) == '-' && lexer->current[2] == '-') {
+                            // Safe bounds check before accessing current[2]
+                            if (peek(lexer) == '-' && peek_next(lexer) == '-' &&
+                                lexer->current[1] != '\0' && lexer->current[2] != '\0' && lexer->current[2] == '-') {
                                 advance(lexer);
                                 advance(lexer);
                                 advance(lexer);
@@ -445,8 +448,8 @@ const char *token_type_name(TokenType type) {
         case TOK_NEWLINE: return "NEWLINE";
         case TOK_EOF: return "EOF";
         case TOK_ERROR: return "ERROR";
+        default: return "UNKNOWN";
     }
-    return "UNKNOWN";
 }
 
 void token_print(Token *tok) {

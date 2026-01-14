@@ -32,15 +32,35 @@ test: test-compiler test-lang
 
 test-compiler:
 	@echo "Running compiler tests..."
-	@for t in tests/compiler/*.c; do \
-		[ -f "$$t" ] && $(CC) $(CFLAGS) "$$t" -o /tmp/test_runner $(LDFLAGS) && /tmp/test_runner || true; \
-	done
+	@passed=0; failed=0; \
+	for t in tests/compiler/*.c; do \
+		[ -f "$$t" ] || continue; \
+		if $(CC) $(CFLAGS) "$$t" -o /tmp/test_runner $(LDFLAGS) 2>/dev/null && /tmp/test_runner; then \
+			passed=$$((passed + 1)); \
+		else \
+			echo "FAIL: $$t"; \
+			failed=$$((failed + 1)); \
+		fi; \
+	done; \
+	echo "Compiler tests: $$passed passed, $$failed failed"; \
+	[ $$failed -eq 0 ]
 
 test-lang:
 	@echo "Running language tests..."
-	@for t in tests/lang/*.null; do \
-		[ -f "$$t" ] && echo "Testing $$t..." && ./$(BIN) "$$t" || true; \
-	done
+	@passed=0; failed=0; \
+	for t in tests/lang/*.null; do \
+		[ -f "$$t" ] || continue; \
+		echo -n "Testing $$t... "; \
+		if ./$(BIN) "$$t" >/dev/null 2>&1; then \
+			echo "OK"; \
+			passed=$$((passed + 1)); \
+		else \
+			echo "FAIL"; \
+			failed=$$((failed + 1)); \
+		fi; \
+	done; \
+	echo "Language tests: $$passed passed, $$failed failed"; \
+	[ $$failed -eq 0 ]
 
 # Dependencies
 $(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(SRC_DIR)/lexer.h $(SRC_DIR)/parser.h $(SRC_DIR)/analyzer.h $(SRC_DIR)/codegen.h
