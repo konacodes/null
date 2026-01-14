@@ -46,6 +46,157 @@ fn compiler_read_source(c :: Compiler, path :: ptr<u8>) -> Compiler do
     ret c
 end
 
+-- Get node kind from AST node
+fn get_node_kind(node :: ptr<ASTNode>) -> i64 do
+    let np :: ptr<u8> = node
+    let kind :: i64 = load_i64(np)
+    ret kind
+end
+
+-- Get node int_value from AST node (offset 24)
+fn get_node_int_value(node :: ptr<ASTNode>) -> i64 do
+    let np :: ptr<u8> = node
+    let offset :: ptr<u8> = ptr_add(np, 24)
+    let val :: i64 = load_i64(offset)
+    ret val
+end
+
+-- Get node name from AST node (offset 48)
+fn get_node_name(node :: ptr<ASTNode>) -> ptr<u8> do
+    let np :: ptr<u8> = node
+    let offset :: ptr<u8> = ptr_add(np, 48)
+    let name :: ptr<u8> = load_ptr(offset)
+    ret name
+end
+
+-- Get node body from AST node (offset 120)
+fn get_node_body(node :: ptr<ASTNode>) -> ptr<ASTNode> do
+    let np :: ptr<u8> = node
+    let offset :: ptr<u8> = ptr_add(np, 120)
+    let body :: ptr<u8> = load_ptr(offset)
+    ret body
+end
+
+-- Get node left from AST node (offset 64)
+fn get_node_left(node :: ptr<ASTNode>) -> ptr<ASTNode> do
+    let np :: ptr<u8> = node
+    let offset :: ptr<u8> = ptr_add(np, 64)
+    let left :: ptr<u8> = load_ptr(offset)
+    ret left
+end
+
+-- Expression codegen result
+struct ExprResult do
+    cg :: Codegen
+    temp :: i64
+end
+
+-- Generate code for an expression, returns temp number holding result
+fn codegen_expr(cg :: Codegen, node :: ptr<ASTNode>) -> ExprResult do
+    let kind :: i64 = get_node_kind(node)
+
+    -- Integer literal
+    if kind == NodeKind::NODE_LITERAL_INT do
+        let val :: i64 = get_node_int_value(node)
+        -- Emit: %temp = add i64 0, val
+        let tr :: TempResult = codegen_next_temp(cg)
+        cg = tr.cg
+        let temp :: i64 = tr.temp
+        cg = emit_indent(cg)
+        cg = emit(cg, "%")
+        cg = emit_int(cg, temp)
+        cg = emit(cg, " = add i64 0, ")
+        cg = emit_int(cg, val)
+        cg = emit_nl(cg)
+        let res :: ExprResult = ExprResult { cg = cg, temp = temp }
+        ret res
+    end
+
+    -- Fallback: return 0
+    let res :: ExprResult = ExprResult { cg = cg, temp = 0 }
+    ret res
+end
+
+-- Generate code for a statement
+fn codegen_stmt(cg :: Codegen, node :: ptr<ASTNode>) -> Codegen do
+    let null_check :: ptr<ASTNode> = 0
+    if node == null_check do
+        ret cg
+    end
+
+    let kind :: i64 = get_node_kind(node)
+
+    -- Return statement
+    if kind == NodeKind::NODE_RETURN do
+        let expr :: ptr<ASTNode> = get_node_left(node)
+        let null_expr :: ptr<ASTNode> = 0
+        if expr != null_expr do
+            let er :: ExprResult = codegen_expr(cg, expr)
+            cg = er.cg
+            cg = emit_indent(cg)
+            cg = emit(cg, "ret i32 %")
+            cg = emit_int(cg, er.temp)
+            cg = emit_nl(cg)
+        else do
+            cg = emit_ret_void(cg)
+        end
+        ret cg
+    end
+
+    ret cg
+end
+
+-- Generate code for a function declaration
+fn codegen_fn_decl(cg :: Codegen, node :: ptr<ASTNode>) -> Codegen do
+    let name :: ptr<u8> = get_node_name(node)
+    cg = emit_fn_start(cg, name, "i32")
+
+    -- Get function body
+    let body :: ptr<ASTNode> = get_node_body(node)
+    let null_check :: ptr<ASTNode> = 0
+    if body != null_check do
+        -- Body is a block node, we need to iterate statements
+        -- For now, just emit a simple return
+        cg = codegen_stmt(cg, body)
+    end
+
+    cg = emit_fn_end(cg)
+    ret cg
+end
+
+-- Get program stmts data (offset 160)
+fn get_program_stmts_data(node :: ptr<ASTNode>) -> ptr<u8> do
+    let np :: ptr<u8> = node
+    let offset :: ptr<u8> = ptr_add(np, 160)
+    let data :: ptr<u8> = load_ptr(offset)
+    ret data
+end
+
+-- Get program stmts count (offset 168)
+fn get_program_stmts_count(node :: ptr<ASTNode>) -> i64 do
+    let np :: ptr<u8> = node
+    let offset :: ptr<u8> = ptr_add(np, 168)
+    let count :: i64 = load_i64(offset)
+    ret count
+end
+
+-- Get node from array at index
+fn get_node_at(data :: ptr<u8>, idx :: i64) -> ptr<ASTNode> do
+    let byte_offset :: i64 = idx * 8
+    let ptr_loc :: ptr<u8> = ptr_add(data, byte_offset)
+    let node :: ptr<u8> = load_ptr(ptr_loc)
+    ret node
+end
+
+-- Generate code for an AST program (simplified for now)
+fn codegen_ast(cg :: Codegen, program :: ptr<ASTNode>) -> Codegen do
+    cg = emit_module_header(cg)
+    cg = emit_fn_start(cg, "main", "i32")
+    cg = emit_ret(cg, "i32", 0)
+    cg = emit_fn_end(cg)
+    ret cg
+end
+
 -- Compile source to LLVM IR
 fn compiler_compile(c :: Compiler) -> Compiler do
     print("  Starting compile...")
@@ -70,10 +221,8 @@ fn compiler_compile(c :: Compiler) -> Compiler do
     print("  Generating LLVM IR...")
     println()
     let cg :: Codegen = codegen_new()
-    cg = emit_module_header(cg)
-    cg = emit_fn_start(cg, "main", "i32")
-    cg = emit_ret(cg, "i32", 0)
-    cg = emit_fn_end(cg)
+    let null_node :: ptr<ASTNode> = 0
+    cg = codegen_ast(cg, null_node)
 
     -- Write IR to file
     print("  Writing IR...")

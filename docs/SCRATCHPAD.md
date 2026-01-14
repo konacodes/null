@@ -81,19 +81,21 @@ typedef enum {
 
 ## Current Focus
 
-**Task:** M5/M6 - Analyzer and Codegen
+**Task:** M6/M7 - End-to-End Compilation & Self-Hosting
 
-**Status:** M5 Foundation Complete
+**Status:** End-to-End Working
 
 **Progress:**
-- Analyzer framework created (nullc/analyzer.null)
-- Type kind enum and utilities implemented
-- 3 analyzer tests passing
+- Main compiler driver (nullc/main.null) created
+- Parser newline handling fixed for real files
+- End-to-end pipeline working: source -> parse -> codegen -> IR -> executable
+- Generated IR compiles with llc/clang and runs correctly
 
 **Next Steps:**
-1. Implement codegen in null (M6)
-2. Wire up parser -> analyzer -> codegen pipeline
-3. Test end-to-end compilation
+1. Implement AST-driven codegen (currently hardcoded)
+2. Add @use directive parsing
+3. Compile hello.null with io_print
+4. Self-host: compile nullc with nullc
 
 ---
 

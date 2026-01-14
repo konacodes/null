@@ -1349,10 +1349,12 @@ fn parse_program(p :: Parser) -> ParseResult do
             -- Continue parsing
             let cont :: ParseResult = parse_program_cont(p, decls)
             p = cont.p
-            -- Store decls in node stmts field
+            -- Store decls in node stmts field (NodeArray: data at 160, count at 168)
             let np :: ptr<u8> = node
-            let stmts_dest :: ptr<u8> = ptr_add(np, 176)
-            store_i64(stmts_dest, decls.count)
+            let data_dest :: ptr<u8> = ptr_add(np, 160)
+            store_ptr(data_dest, decls.data)
+            let count_dest :: ptr<u8> = ptr_add(np, 168)
+            store_i64(count_dest, decls.count)
         end
     end
 
