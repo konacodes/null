@@ -333,10 +333,10 @@ Each session follows this loop:
 - Note: Uses hardcoded "main" name due to C compiler bug with
   loading pointers inside while loops (discovered during debugging)
 
-#### [CURRENTLY HERE] M7: Self-Hosting Complete ✓ when complete
-- [ ] nullc compiles itself
-- [ ] nullc-compiled-by-nullc compiles hello.null
-- [ ] Output matches original
+#### M7: Self-Hosting Complete ✓ COMPLETE
+- [x] nullc compiles itself
+- [x] nullc-compiled-by-nullc compiles hello.null
+- [x] Output matches original (MD5: 2d76634223ce233392abdf03379a7539)
 
 ---
 

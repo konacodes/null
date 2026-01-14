@@ -1,11 +1,32 @@
 # Scratchpad - Shared Agent Memory
 
 > **Last Updated:** 2026-01-14
-> **Current Phase:** 2 - M4 (Self-Hosted Parser)
+> **Current Phase:** 2 - M7 COMPLETE (Self-Hosting)
 
 ---
 
-## Current Milestone: M4 - Parser in Null
+## Current Milestone: M7 - Self-Hosting Complete
+
+**Status:** ✓ COMPLETE - Full self-hosting achieved!
+
+### Achievement Summary:
+1. **nullc compiles itself** ✓ - mini.null (8215 lines LLVM IR, 121 functions)
+2. **Self-compiled nullc compiles hello.null** ✓ - Produces working executable
+3. **Output matches original** ✓ - MD5: 2d76634223ce233392abdf03379a7539
+
+### Key Files:
+- `nullc/mini.null` - Self-hosted compiler (2800+ lines)
+- `/tmp/claude/mini_v10` - Rust-compiled mini
+- `/tmp/claude/mini_self` - Self-compiled mini (bootstrapped!)
+
+### Final Fixes for M7:
+1. **String escape lexer** - Handle backslash escapes in string scanning
+2. **unescape_string()** - Convert `\"` → `"`, `\\` → `\`, `\n` → newline, etc.
+3. **String literal parsing** - Apply unescape when extracting string values
+
+---
+
+## Previous Milestone: M4 - Parser in Null
 
 **Status:** ✓ Complete - 12 tests passing
 
@@ -81,21 +102,33 @@ typedef enum {
 
 ## Current Focus
 
-**Task:** M6/M7 - End-to-End Compilation & Self-Hosting
+**Task:** M7 - Self-Hosting ✓ COMPLETE
 
-**Status:** End-to-End Working
+**Status:** Self-Hosting Achieved!
 
-**Progress:**
-- Main compiler driver (nullc/main.null) created
-- Parser newline handling fixed for real files
-- End-to-end pipeline working: source -> parse -> codegen -> IR -> executable
-- Generated IR compiles with llc/clang and runs correctly
+**What Works:**
+```bash
+# Build mini.null with Rust compiler
+./null build nullc/mini.null -o /tmp/claude/mini_v10
 
-**Next Steps:**
-1. Implement AST-driven codegen (currently hardcoded)
-2. Add @use directive parsing
-3. Compile hello.null with io_print
-4. Self-host: compile nullc with nullc
+# Self-compile: mini compiles itself
+cp nullc/mini.null /tmp/claude/aaa.null
+cd /tmp/claude && ./mini_v10  # Produces mini_out.ll
+
+# Compile the self-compiled IR to binary
+llc -filetype=obj mini_out.ll -o mini_out.o
+gcc -no-pie mini_out.o -o mini_self -lm
+
+# Test: self-compiled mini compiles hello.null
+echo 'fn main() -> i32 do print("Hello!") ret 0 end' > aaa.null
+./mini_self  # Produces mini_out.ll
+# Both Rust-compiled and self-compiled produce identical output!
+```
+
+**Verified:**
+- Rust-compiled and self-compiled mini produce byte-identical LLVM IR
+- MD5 hash matches: 2d76634223ce233392abdf03379a7539
+- Full bootstrap chain working
 
 ---
 
@@ -142,6 +175,45 @@ dynamic_array.null    NOT WRITTEN
 ---
 
 ## Session Log
+
+### Session N+3 (2026-01-14) - M7 SELF-HOSTING COMPLETE 🎉
+**Major Achievement: null compiler compiles itself!**
+
+**Problem Identified:**
+- Self-compilation was truncating at 116 functions (missing main)
+- Strings containing `\"` were being cut off early
+- The `\"` in target triple and other strings caused lexer to terminate string early
+
+**Fixes Applied:**
+1. **String lexer escape handling** (lines 627-648 in mini.null)
+   - When scanning strings, now skips character after backslash
+   - Prevents `\"` from being seen as end of string
+
+2. **unescape_string() function** (lines 405-444)
+   - Converts escape sequences when extracting string values
+   - `\"` → `"`, `\\` → `\`, `\n` → newline(10), `\t` → tab(9)
+
+3. **String literal parsing** (line 1082)
+   - Changed `lex_token_text(lex)` to `unescape_string(lex_token_text(lex))`
+
+**Results:**
+- Output grew from 7550 to 8215 lines, 116 to 121 functions
+- `main` function now present
+- Self-compiled binary produces identical output to Rust-compiled
+- MD5 verification: both produce `2d76634223ce233392abdf03379a7539`
+
+**The Bootstrap Chain:**
+```
+mini.null (source)
+    ↓ [Rust compiler]
+mini_v10 (binary)
+    ↓ [compiles mini.null]
+mini_out.ll (LLVM IR)
+    ↓ [llc + gcc]
+mini_self (self-compiled binary)
+    ↓ [compiles hello.null]
+hello_out.ll (identical to Rust-compiled output!)
+```
 
 ### Session N+2 (2026-01-14) - End-to-End Compilation
 **End-to-end pipeline working:**
