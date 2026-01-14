@@ -1,212 +1,392 @@
-# null - Language Specification
+# null - Phase 2: Self-Hosting Specification
+
+## Mission
+
+Bootstrap null by writing a null compiler in null itself. This is an AI research project exploring how far autonomous AI agents can push systems programming. The goal is a fully self-hosted compiler within ~15 focused sessions.
 
 ## Philosophy
 
-You are building `null`, a compiled programming language written in C. This spec defines *what* to build, not *how*. Make implementation decisions yourself. When you encounter errors or get stuck in circles, **stop and research** using web search or documentation rather than guessing repeatedly. The syntax should be unique, yet readable. snazzy yet familiar. Be different!
+The original null compiler (written in C) is complete and working. Now we write `nullc` - a null compiler written in null. This proves the language is powerful enough for real systems work and creates a beautiful recursive loop: null compiling null.
 
-## Core Principle: Minimal Kernel
+**Key insight:** AI can work faster than humans. When stuck, research - don't guess. Use web search, read LLVM docs, study other compilers. This is engineering, not a test.
 
-The compiler core should contain **only primitives** - the absolute minimum needed to bootstrap everything else. All other functionality lives in the standard library. Think of it like a microkernel: the compiler knows how to handle memory, basic types, function calls, and module loading. Everything else - even basic operations like printing, string manipulation, math beyond arithmetic - should be library code written in null itself or thin C bindings.
+## Architecture: Subagents with Shared Scratchpad
 
-Ask yourself: "Can this be a library instead of a primitive?" If yes, make it a library.
-
-## Final Deliverable
-
-A single binary called `null` that works like this:
-
-```bash
-./null program.null      # compiles and runs program.null
-./null run program.null  # same as above
-./null build program.null -o program  # compile to executable
-```
-
-The binary should handle the full pipeline: lex → parse → analyze → codegen → link → (optionally) execute.
-
-## Module System
-
-Design a creative and extensible module import system. Consider:
-
-- Local imports (relative paths, project-local modules)
-- Remote imports (URLs, package registry, git repos?)
-- How dependencies are resolved and cached
-- How the standard library is distributed (bundled? fetched? embedded?)
-
-Some inspiration (don't copy, innovate):
-- Go's URL-based imports
-- Deno's URL imports with lock files  
-- Zig's package manager
-- A content-addressed approach?
-
-The module system should make it trivial to extend null's capabilities without modifying the compiler. Document your design in `docs/MODULES.md` as you build it.
-
-## Primitives (Compiler Core)
-
-These are suggestions. Adjust based on what you discover is truly necessary:
-
-- Integer types (at minimum: i64, u64, or similar)
-- Floating point (f64)
-- Booleans
-- Pointers/references
-- Functions
-- Structs/records
-- Arrays (fixed or dynamic - your call)
-- Module/import mechanism
-- Basic control flow (if, loops, return)
-
-Everything else = library.
-
-## Standard Library Structure
-
-Create a `std/` directory with null source files. Start minimal:
+This project uses multiple AI agents working in parallel. All agents share a scratchpad file for coordination:
 
 ```
-std/
-  io.null       # print, read, file operations
-  string.null   # string manipulation
-  math.null     # beyond basic arithmetic
-  mem.null      # allocators, utilities
-  ...
+docs/SCRATCHPAD.md   # Shared state between all agents
 ```
 
-These can call into C via whatever FFI mechanism you design.
+### Scratchpad Contents
 
-## Testing Strategy
+```markdown
+# Scratchpad - Shared Agent Memory
 
-Maintain two test suites:
+## Codemap
+[Auto-updated map of key functions/structs and their locations]
 
-### 1. Compiler Tests (`tests/compiler/`)
-Unit tests for the C codebase. Test lexer, parser, codegen in isolation.
+## Current Focus
+[What's being worked on right now]
 
-```bash
-make test-compiler  # or however you structure it
+## Blockers
+[Issues that need resolution]
+
+## Decisions Log
+[Architectural decisions made and why]
+
+## Test Status
+[Which tests pass/fail]
 ```
 
-### 2. Language Tests (`tests/lang/`)
-Programs written in null that verify language behavior:
+### Agent Roles
 
-```
-tests/lang/
-  arithmetic.null     # 1 + 1 == 2
-  functions.null      # function calls work
-  modules.null        # imports resolve correctly
-  std_io.null         # std/io works
-  ...
-```
+| Agent | Responsibility |
+|-------|----------------|
+| **Architect** | Design decisions, breaks down tasks, updates scratchpad |
+| **Implementer** | Writes code, follows architect's plan |
+| **Tester** | Runs tests, reports failures, writes new tests |
+| **Researcher** | Web search, reads docs, solves blockers |
 
-Each test file should be runnable and self-verifying (exit 0 = pass, exit 1 = fail, or use assertions).
-
-```bash
-./null test tests/lang/  # run all language tests
-```
-
-### Test-Driven Loop
-
-When adding features:
-1. Write a failing test in `tests/lang/`
-2. Implement until it passes
-3. Refactor
-4. Commit
-
-## Development Loop Instructions
-
-You are operating in a self-improving loop. On each iteration:
-
-1. **Assess**: What's the current state? What works? What's broken?
-2. **Prioritize**: What's the smallest next step that adds value?
-3. **Implement**: Build it. Write tests.
-4. **Verify**: Run tests. Does it work?
-5. **Document**: Update docs if needed.
-
-### When Stuck
-
-**DO NOT** repeatedly try variations of the same fix. If something fails twice with similar approaches:
-
-1. Stop
-2. Research the error message or concept
-3. Read documentation or examples
-4. Understand *why* it's failing before trying again
-
-Use web search. Read man pages. Check how other compilers solve similar problems. This is not cheating - it's engineering.
-
-## Build System
-
-Use Make, CMake, or just a shell script - your choice. The build should:
-
-- Compile all C sources into the `null` binary
-- Be incremental (don't rebuild everything every time)
-- Have a `clean` target
-- Have a `test` target that runs both test suites
-
-## Code Organization
-
-Suggested (adapt as needed):
-
-```
-null/
-  src/
-    main.c          # entry point, CLI handling
-    lexer.c/.h      # tokenization  
-    parser.c/.h     # AST construction
-    analyzer.c/.h   # type checking, semantic analysis
-    codegen.c/.h    # code generation (to C? to asm? LLVM? your call)
-    runtime.c/.h    # minimal runtime if needed
-  std/              # standard library (null source files)
-  tests/
-    compiler/       # C unit tests
-    lang/           # null language tests
-  docs/
-    MODULES.md      # module system documentation
-    SYNTAX.md       # language syntax reference
-  Makefile
-  SPEC.md           # this file
-```
-
-## Codegen Target
-
-Decide how null compiles to machine code:
-
-- **Transpile to C**: Easiest. Generate C, then call gcc/clang. (NOT PREFERRED)
-- **Direct assembly**: More control, more work. (SOME DAY)
-- **LLVM**: Powerful optimization, steeper learning curve. (PREFERRED)
-- **Custom bytecode + interpreter**: Simpler but not truly "compiled."
-
-Pick one and commit. You can always revisit later.
-
-## Syntax
-
-Design the syntax yourself. Make it:
-
-- Consistent
-- Unambiguous (easy to parse)
-- Reasonably ergonomic
-
-Document it in `docs/SYNTAX.md` as you go. Start simple - you can add sugar later.
-
-## Non-Goals (For Now)
-
-Don't worry about these initially:
-
-- Garbage collection (manual memory or arena allocators are fine)
-- Generics/templates
-- Async/concurrency
-- REPL
-- IDE integration
-- Performance optimization
-
-Get it working first. Make it good later.
-
-## Success Criteria
-
-You're done with the initial version when:
-
-1. `./null examples/hello.null` prints "Hello, world!" and exits
-2. The hello world program uses `std/io` for printing
-3. At least 5 language tests pass
-4. The module system can import local files
-5. A program can define and call functions
-
-Everything beyond this is iteration.
+Agents read scratchpad before working, write updates after. This prevents duplicate work and maintains shared understanding.
 
 ---
 
-*Remember: Research when stuck. Primitives stay primitive. Libraries do the work. Ship something that runs.*
+## Phase 2.1: Language Features (Prerequisites)
+
+Before self-hosting, null needs these features in the C compiler:
+
+### P0: Critical (Blockers)
+
+#### Struct Returns from Functions
+```null
+fn create_token(kind :: TokenKind, line :: i64) -> Token do
+    ret Token { kind = kind, line = line, col = 0 }
+end
+```
+**Implementation:** Update `codegen.c` to use LLVM's `sret` (struct return) convention for functions returning structs. The struct is passed as a hidden first parameter pointer.
+
+**Files:** `src/codegen.c`, `src/analyzer.c`
+
+#### Enums
+```null
+enum TokenKind do
+    EOF
+    IDENT
+    NUMBER
+    STRING
+    PLUS
+    MINUS
+    -- etc
+end
+
+let tok :: TokenKind = TokenKind.IDENT
+```
+**Implementation:** Integer-backed enums. Each variant is an i32. Support `EnumName.Variant` syntax.
+
+**Files:** `src/lexer.c`, `src/parser.c`, `src/analyzer.c`, `src/codegen.c`, `src/interp.c`
+
+### P1: High Priority
+
+#### Dynamic Arrays (Slices)
+```null
+mut tokens :: [Token] = []
+tokens = append(tokens, new_token)
+let len :: i64 = length(tokens)
+```
+**Implementation:** Fat pointer (ptr + length + capacity). `append` reallocates via malloc when needed.
+
+#### String Type
+```null
+let s :: string = "hello"
+let c :: u8 = s[0]
+let sub :: string = slice(s, 0, 3)
+if s == "hello" do ... end
+```
+**Implementation:** `string` is `ptr<u8>` + length. No null terminator required internally.
+
+#### Methods on Types
+```null
+fn (t :: Token) is_keyword() -> bool do
+    ret t.kind >= TokenKind.FN and t.kind <= TokenKind.END
+end
+
+-- called as:
+if tok.is_keyword() do ... end
+```
+
+### P2: Nice to Have
+
+#### Match Expression
+```null
+let name :: string = match tok.kind do
+    TokenKind.PLUS -> "plus"
+    TokenKind.MINUS -> "minus"
+    _ -> "unknown"
+end
+```
+
+#### Result Type (Error Handling)
+```null
+fn parse_expr() -> Result<Expr, Error> do
+    if error_condition do
+        ret Err(Error { msg = "unexpected token" })
+    end
+    ret Ok(expr)
+end
+```
+
+---
+
+## Phase 2.2: Standard Library Expansion
+
+### std/mem.null
+```null
+@extern "C" do
+    fn malloc(size :: u64) -> ptr<u8>
+    fn realloc(p :: ptr<u8>, size :: u64) -> ptr<u8>
+    fn free(p :: ptr<u8>) -> void
+    fn memcpy(dst :: ptr<u8>, src :: ptr<u8>, n :: u64) -> ptr<u8>
+end
+
+fn alloc<T>(count :: u64) -> ptr<T> do
+    ret malloc(count * sizeof(T))
+end
+```
+
+### std/string.null
+```null
+fn str_eq(a :: string, b :: string) -> bool
+fn str_concat(a :: string, b :: string) -> string
+fn str_slice(s :: string, start :: i64, end :: i64) -> string
+fn str_find(haystack :: string, needle :: string) -> i64
+fn str_from_cstr(s :: ptr<u8>) -> string
+fn str_to_cstr(s :: string) -> ptr<u8>
+```
+
+### std/array.null
+```null
+fn array_new<T>() -> [T]
+fn array_push<T>(arr :: ptr<[T]>, val :: T) -> void
+fn array_pop<T>(arr :: ptr<[T]>) -> T
+fn array_get<T>(arr :: [T], idx :: i64) -> T
+fn array_len<T>(arr :: [T]) -> i64
+```
+
+### std/map.null
+```null
+struct Map<K, V> do
+    buckets :: [ptr<Entry<K, V>>]
+    size :: i64
+end
+
+fn map_new<K, V>() -> Map<K, V>
+fn map_set<K, V>(m :: ptr<Map<K, V>>, key :: K, val :: V) -> void
+fn map_get<K, V>(m :: Map<K, V>, key :: K) -> Option<V>
+fn map_has<K, V>(m :: Map<K, V>, key :: K) -> bool
+```
+
+*Note: Generics may not be implemented. Use concrete types initially: `MapStrI64`, `MapStrPtr`, etc.*
+
+---
+
+## Phase 2.3: The Self-Hosted Compiler (nullc)
+
+### Directory Structure
+```
+nullc/
+  src/
+    main.null       # CLI, orchestration
+    lexer.null      # Tokenization
+    parser.null     # AST construction
+    analyzer.null   # Type checking, semantic analysis
+    codegen.null    # LLVM IR text output
+    types.null      # Token, AST, Type definitions
+  tests/
+    lexer_test.null
+    parser_test.null
+    ...
+```
+
+### Compilation Strategy
+
+nullc outputs LLVM IR as text files, then shells out to `llc` and `clang` for machine code:
+
+```null
+fn compile(source :: string, output :: string) -> i32 do
+    let tokens :: [Token] = lex(source)
+    let ast :: Module = parse(tokens)
+    let typed_ast :: Module = analyze(ast)
+    let ir :: string = codegen(typed_ast)
+
+    write_file("/tmp/out.ll", ir)
+
+    -- Shell out to LLVM toolchain
+    system("llc -filetype=obj /tmp/out.ll -o /tmp/out.o")
+    system("clang /tmp/out.o -o " + output)
+
+    ret 0
+end
+```
+
+This avoids needing to link against LLVM libraries from null.
+
+### Key Data Structures
+
+```null
+enum TokenKind do
+    -- Literals
+    EOF, IDENT, INT, FLOAT, STRING
+    -- Keywords
+    FN, LET, MUT, CONST, IF, ELIF, ELSE, WHILE, FOR, IN
+    DO, END, RET, STRUCT, ENUM, BREAK, CONTINUE, TRUE, FALSE
+    -- Operators
+    PLUS, MINUS, STAR, SLASH, PERCENT
+    EQ, NE, LT, LE, GT, GE
+    AND, OR, NOT
+    ASSIGN, DOUBLE_COLON, ARROW, DOT, COMMA
+    LPAREN, RPAREN, LBRACKET, RBRACKET, LBRACE, RBRACE
+    -- Directives
+    AT_USE, AT_EXTERN
+end
+
+struct Token do
+    kind :: TokenKind
+    lexeme :: string
+    line :: i64
+    col :: i64
+end
+
+enum NodeKind do
+    -- Expressions
+    INT_LIT, FLOAT_LIT, STRING_LIT, BOOL_LIT
+    IDENT, BINARY, UNARY, CALL, INDEX, FIELD
+    STRUCT_LIT, ARRAY_LIT
+    -- Statements
+    VAR_DECL, ASSIGN, IF, WHILE, FOR, RET
+    BREAK, CONTINUE, EXPR_STMT, BLOCK
+    -- Declarations
+    FN_DECL, STRUCT_DECL, ENUM_DECL
+    USE, EXTERN_BLOCK
+end
+
+struct ASTNode do
+    kind :: NodeKind
+    -- Union-like fields (check kind before accessing)
+    int_val :: i64
+    float_val :: f64
+    str_val :: string
+    name :: string
+    children :: [ptr<ASTNode>]
+    node_type :: ptr<Type>
+    line :: i64
+    col :: i64
+end
+```
+
+---
+
+## Development Workflow
+
+### Session Structure
+
+Each session follows this loop:
+
+1. **Read scratchpad** - What's the current state?
+2. **Pick one task** - Smallest valuable increment
+3. **Implement** - Write code, commit often
+4. **Test** - Run tests, fix failures
+5. **Update scratchpad** - Log progress, blockers, decisions
+
+### Milestone Checklist
+
+#### M1: Language Features ✓ when complete
+- [ ] Struct returns from functions
+- [ ] Enum types
+- [ ] Basic enum in match/if
+
+#### M2: Standard Library ✓ when complete
+- [ ] std/mem.null (malloc/free wrappers)
+- [ ] std/string.null (comparison, concat, slice)
+- [ ] std/array.null (dynamic arrays)
+- [ ] std/map.null (hash map, string keys)
+- [ ] std/file.null (read_file, write_file)
+
+#### M3: Lexer in null ✓ when complete
+- [ ] nullc/src/types.null (Token, TokenKind)
+- [ ] nullc/src/lexer.null (full lexer)
+- [ ] Lexer tests pass
+
+#### M4: Parser in null ✓ when complete
+- [ ] nullc/src/types.null (ASTNode, NodeKind)
+- [ ] nullc/src/parser.null (full parser)
+- [ ] Parser tests pass
+
+#### M5: Analyzer in null ✓ when complete
+- [ ] nullc/src/analyzer.null (type checking)
+- [ ] Analyzer tests pass
+
+#### M6: Codegen in null ✓ when complete
+- [ ] nullc/src/codegen.null (emit LLVM IR)
+- [ ] End-to-end: nullc compiles hello.null
+
+#### M7: Self-Hosting Complete ✓ when complete
+- [ ] nullc compiles itself
+- [ ] nullc-compiled-by-nullc compiles hello.null
+- [ ] Output matches original
+
+---
+
+## Research Resources
+
+When stuck, consult:
+
+| Topic | Resource |
+|-------|----------|
+| LLVM IR | https://llvm.org/docs/LangRef.html |
+| LLVM struct returns | Search: "llvm sret attribute struct return" |
+| Writing parsers | Crafting Interpreters (craftinginterpreters.com) |
+| Compiler design | https://c9x.me/compile/ (QBE author's notes) |
+| Self-hosting history | Search: "self-hosting compiler bootstrap" |
+
+**DO NOT** guess repeatedly. If two similar attempts fail, stop and research.
+
+---
+
+## Success Criteria
+
+**Phase 2 is complete when:**
+
+1. `./nullc nullc/src/main.null -o nullc2` - nullc compiles itself
+2. `./nullc2 examples/hello.null -o hello` - the compiled compiler works
+3. `./hello` prints "Hello, world!"
+4. All language tests pass when compiled by nullc
+5. The scratchpad documents the journey
+
+---
+
+## Anti-Goals
+
+Don't optimize for:
+- Performance (correctness first)
+- Beautiful code (working code first)
+- Full feature parity with C compiler (subset is fine)
+- Generics (use concrete types)
+- Error recovery (fail fast is fine)
+
+---
+
+## Starting Point
+
+The C compiler is complete and working:
+- 8 language tests pass
+- JIT, interpreter, and AOT compilation work
+- REPL works
+- Module system with cycle detection
+- Enhanced error messages
+
+**Next immediate task:** Implement struct returns in `src/codegen.c`
+
+---
+
+*The goal isn't to build a production compiler. It's to prove that AI can bootstrap a programming language from scratch. Ship something that compiles itself.*
