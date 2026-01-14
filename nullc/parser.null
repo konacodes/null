@@ -682,6 +682,79 @@ fn parse_var_decl(p :: Parser) -> ParseResult do
     ret res
 end
 
+-- Parse if statement: if <cond> do <block> [elif <cond> do <block>]* [else do <block>] end
+fn parse_if(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)  -- consume 'if'
+
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_IF, cur.line, cur.column)
+
+    -- Parse condition
+    let cond :: ParseResult = parse_expression(p)
+    p = cond.p
+    -- Store condition
+    let np :: ptr<u8> = node
+    let cond_dest :: ptr<u8> = ptr_add(np, 192)  -- condition offset
+    store_ptr(cond_dest, cond.node)
+
+    -- Expect 'do'
+    p = consume(p, TokenType::TOK_DO, "Expected 'do' after if condition")
+
+    -- Parse then branch
+    let then_branch :: ParseResult = parse_block(p)
+    p = then_branch.p
+    let then_dest :: ptr<u8> = ptr_add(np, 200)  -- then_branch offset
+    store_ptr(then_dest, then_branch.node)
+
+    -- Check for else/elif
+    let check :: Token = p.current
+    if check.tok_type == TokenType::TOK_ELSE do
+        p = parser_advance(p)  -- consume 'else'
+        p = consume(p, TokenType::TOK_DO, "Expected 'do' after else")
+        let else_branch :: ParseResult = parse_block(p)
+        p = else_branch.p
+        let else_dest :: ptr<u8> = ptr_add(np, 208)  -- else_branch offset
+        store_ptr(else_dest, else_branch.node)
+    end
+
+    -- Expect 'end'
+    p = consume(p, TokenType::TOK_END, "Expected 'end' after if statement")
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Parse while statement: while <cond> do <block> end
+fn parse_while(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)  -- consume 'while'
+
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_WHILE, cur.line, cur.column)
+
+    -- Parse condition
+    let cond :: ParseResult = parse_expression(p)
+    p = cond.p
+    -- Store condition
+    let np :: ptr<u8> = node
+    let cond_dest :: ptr<u8> = ptr_add(np, 192)
+    store_ptr(cond_dest, cond.node)
+
+    -- Expect 'do'
+    p = consume(p, TokenType::TOK_DO, "Expected 'do' after while condition")
+
+    -- Parse body
+    let body :: ParseResult = parse_block(p)
+    p = body.p
+    let body_dest :: ptr<u8> = ptr_add(np, 200)
+    store_ptr(body_dest, body.node)
+
+    -- Expect 'end'
+    p = consume(p, TokenType::TOK_END, "Expected 'end' after while statement")
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
 -- Parse a single statement
 fn parse_statement(p :: Parser) -> ParseResult do
     let cur :: Token = p.current
@@ -692,6 +765,14 @@ fn parse_statement(p :: Parser) -> ParseResult do
 
     if cur.tok_type == TokenType::TOK_LET do
         ret parse_var_decl(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_IF do
+        ret parse_if(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_WHILE do
+        ret parse_while(p)
     end
 
     -- Expression statement
@@ -917,7 +998,24 @@ fn parser_test() -> i32 do
         println()
     end
 
-    -- (Additional tests removed for debugging)
+    -- Test 3: Parse if statement
+    print("Test 3: Parse if statement")
+    println()
+    let if_src :: ptr<u8> = "if true do ret 1 end"
+    let if_len :: i64 = 20
+    let ifp :: Parser = parser_new(if_src, if_len)
+    let if_result :: ParseResult = parse_if(ifp)
+    let ifpp :: Parser = if_result.p
+    if ifpp.had_error do
+        print("  ERROR")
+        println()
+    else do
+        let if_kind :: i64 = node_kind(if_result.node)
+        print("  SUCCESS (kind=")
+        print_int(if_kind)
+        print(")")
+        println()
+    end
 
     println()
     print("=== All tests passed ===")
