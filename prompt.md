@@ -301,23 +301,23 @@ Each session follows this loop:
 ### Milestone Checklist
 
 #### M1: Language Features ✓ when complete
-- [ ] Struct returns from functions
-- [ ] Enum types
-- [ ] Basic enum in match/if
+- [x] Struct returns from functions
+- [x] Enum types
+- [x] Basic enum in match/if
 
 #### M2: Standard Library ✓ when complete
-- [ ] std/mem.null (malloc/free wrappers)
-- [ ] std/string.null (comparison, concat, slice)
-- [ ] std/array.null (dynamic arrays)
-- [ ] std/map.null (hash map, string keys)
-- [ ] std/file.null (read_file, write_file)
+- [x] std/mem.null (malloc/free wrappers)
+- [x] std/string.null (comparison, concat, slice)
+- [x] std/array.null (dynamic arrays)
+- [x] std/map.null (hash map, string keys)
+- [x] std/file.null (read_file, write_file)
 
 #### M3: Lexer in null ✓ when complete
-- [ ] nullc/src/types.null (Token, TokenKind)
-- [ ] nullc/src/lexer.null (full lexer)
-- [ ] Lexer tests pass
+- [x] nullc/src/types.null (Token, TokenKind)
+- [x] nullc/src/lexer.null (full lexer)
+- [x] Lexer tests pass
 
-#### M4: Parser in null ✓ when complete
+#### [CURRENTLY HERE] M4: Parser in null ✓ when complete
 - [ ] nullc/src/types.null (ASTNode, NodeKind)
 - [ ] nullc/src/parser.null (full parser)
 - [ ] Parser tests pass
