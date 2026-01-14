@@ -56,8 +56,8 @@ fn emit_expr(cg :: Codegen, expr :: ptr<u8>) -> Codegen do
     if kind == 23 do
         let name :: ptr<u8> = get_call_name(expr)
         if call_has_string_arg(expr) do
-            -- Use hardcoded string for now (str id 0)
-            cg = emit_call_with_str(cg, name, 0)
+            -- Map io_print to puts for now
+            cg = emit_call_with_str(cg, "puts", 0)
         else do
             cg = emit_call_void(cg, name)
         end
@@ -176,7 +176,7 @@ fn main() -> i32 do
     print("=== nullc Compiler ===")
     println()
 
-    let source :: ptr<u8> = file_read_all("/tmp/claude/test_hello.null")
+    let source :: ptr<u8> = file_read_all("examples/hello.null")
     let null_ptr :: ptr<u8> = 0
     if source == null_ptr do
         print("Failed to read")
@@ -184,7 +184,7 @@ fn main() -> i32 do
         ret 1
     end
 
-    let f :: ptr<u8> = file_open_read("/tmp/claude/test_hello.null")
+    let f :: ptr<u8> = file_open_read("examples/hello.null")
     let size :: i64 = file_size(f)
     file_close(f)
     print("Read ")

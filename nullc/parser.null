@@ -199,6 +199,22 @@ fn parser_new(source :: ptr<u8>, length :: i64) -> Parser do
     ret p
 end
 
+-- Copy token text to a null-terminated string (strip quotes for strings)
+fn token_text_strip_quotes(tok :: Token) -> ptr<u8> do
+    let src :: ptr<u8> = ptr_add(tok.start, tok.start_offset + 1)
+    let len :: i64 = tok.length - 2
+    let alloc_size :: i64 = ((len + 8) / 8) * 8 + 8
+    let buf :: ptr<u8> = alloc(alloc_size)
+    let i :: i64 = 0
+    while i < alloc_size do
+        store_i64(ptr_add(buf, i), 0)
+        i = i + 8
+    end
+    let len_u64 :: u64 = len
+    memcpy(buf, src, len_u64)
+    ret buf
+end
+
 -- Copy token text to a null-terminated string
 fn token_text(tok :: Token) -> ptr<u8> do
     let src :: ptr<u8> = ptr_add(tok.start, tok.start_offset)
@@ -486,6 +502,10 @@ fn parse_primary(p :: Parser) -> ParseResult do
     -- String literal
     if cur.tok_type == TokenType::TOK_STRING_LIT do
         let node :: ptr<ASTNode> = make_node(NodeKind::NODE_LITERAL_STRING, cur.line, cur.column)
+        -- Store string value (offset 40), stripping quotes from token
+        let str_text :: ptr<u8> = token_text_strip_quotes(cur)
+        let np :: ptr<u8> = node
+        store_ptr(ptr_add(np, 40), str_text)
         let new_p :: Parser = parser_advance(p)
         let res :: ParseResult = ParseResult { p = new_p, node = node }
         ret res
