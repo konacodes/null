@@ -1,0 +1,1769 @@
+-- nullc/parser.null
+-- Parser for the null language, written in null
+-- This is part of the self-hosting compiler
+
+@use "std/io.null"
+@use "std/mem.null"
+@use "std/string.null"
+@use "nullc/lexer.null"
+
+-- AST Node types
+enum NodeKind do
+    -- Declarations
+    NODE_PROGRAM
+    NODE_FN_DECL
+    NODE_STRUCT_DECL
+    NODE_ENUM_DECL
+    NODE_VAR_DECL
+    NODE_PARAM
+    NODE_EXTERN
+    NODE_FIELD
+
+    -- Statements
+    NODE_BLOCK
+    NODE_RETURN
+    NODE_IF
+    NODE_WHILE
+    NODE_FOR
+    NODE_EXPR_STMT
+    NODE_BREAK
+    NODE_CONTINUE
+
+    -- Expressions
+    NODE_LITERAL_INT
+    NODE_LITERAL_FLOAT
+    NODE_LITERAL_STRING
+    NODE_LITERAL_BOOL
+    NODE_IDENT
+    NODE_BINARY
+    NODE_UNARY
+    NODE_CALL
+    NODE_MEMBER
+    NODE_INDEX
+    NODE_ASSIGN
+    NODE_STRUCT_INIT
+    NODE_ARRAY_INIT
+    NODE_ENUM_VARIANT
+    NODE_CAST
+end
+
+-- Binary operators
+enum BinaryOp do
+    BIN_ADD
+    BIN_SUB
+    BIN_MUL
+    BIN_DIV
+    BIN_MOD
+    BIN_EQ
+    BIN_NE
+    BIN_LT
+    BIN_LE
+    BIN_GT
+    BIN_GE
+    BIN_AND
+    BIN_OR
+    BIN_BIT_AND
+    BIN_BIT_OR
+    BIN_BIT_XOR
+    BIN_LSHIFT
+    BIN_RSHIFT
+end
+
+-- Unary operators
+enum UnaryOp do
+    UN_NEG
+    UN_NOT
+    UN_BIT_NOT
+    UN_ADDR
+    UN_DEREF
+end
+
+-- Type kinds
+enum TypeKind do
+    TYPE_VOID
+    TYPE_BOOL
+    TYPE_I8
+    TYPE_I16
+    TYPE_I32
+    TYPE_I64
+    TYPE_U8
+    TYPE_U16
+    TYPE_U32
+    TYPE_U64
+    TYPE_F32
+    TYPE_F64
+    TYPE_PTR
+    TYPE_ARRAY
+    TYPE_STRUCT
+    TYPE_ENUM
+    TYPE_FN
+end
+
+-- Type representation (simplified)
+-- In a full implementation this would be a tagged union
+struct ASTType do
+    kind :: i64          -- TypeKind enum value
+    name :: ptr<u8>      -- For struct/enum types: type name
+    ptr_to_kind :: i64   -- For ptr<T>: the element type kind
+    ptr_to_name :: ptr<u8> -- For ptr<Struct>: the struct name
+    array_size :: i64    -- For arrays: the size
+end
+
+-- Dynamic array of AST node pointers (avoids ptr<ptr<T>> syntax)
+-- Elements are stored as raw bytes, interpreted as ptr<ASTNode>
+struct NodeArray do
+    data :: ptr<u8>      -- Raw memory for ptr<ASTNode> elements
+    count :: i64
+    capacity :: i64
+end
+
+-- AST Node (simplified - uses fixed fields instead of union)
+struct ASTNode do
+    kind :: i64          -- NodeKind enum value
+    line :: i64          -- Source line number
+    column :: i64        -- Source column number
+
+    -- Data fields - interpretation depends on kind
+    -- For literals:
+    int_value :: i64
+    float_value :: f64
+    string_value :: ptr<u8>
+    bool_value :: bool
+
+    -- For identifiers and names:
+    name :: ptr<u8>
+
+    -- For binary/unary expressions:
+    op :: i64            -- BinaryOp or UnaryOp
+    left :: ptr<ASTNode>
+    right :: ptr<ASTNode>
+    operand :: ptr<ASTNode>
+
+    -- For function calls:
+    callee :: ptr<ASTNode>
+    args :: NodeArray
+
+    -- For function declarations:
+    ret_type :: ptr<ASTType>
+    params :: NodeArray
+    body :: ptr<ASTNode>
+
+    -- For var declarations:
+    var_type :: ptr<ASTType>
+    init :: ptr<ASTNode>
+    is_const :: bool
+
+    -- For structs/enums:
+    fields :: NodeArray
+    variants :: NodeArray
+
+    -- For blocks:
+    stmts :: NodeArray
+
+    -- For if statements:
+    condition :: ptr<ASTNode>
+    then_branch :: ptr<ASTNode>
+    else_branch :: ptr<ASTNode>
+
+    -- For loops:
+    loop_var :: ptr<u8>
+    loop_start :: ptr<ASTNode>
+    loop_end :: ptr<ASTNode>
+    loop_body :: ptr<ASTNode>
+end
+
+-- Parser state
+struct Parser do
+    lex :: Lexer
+    current :: Token
+    previous :: Token
+    had_error :: bool
+    panic_mode :: bool
+end
+
+-- Create a new parser
+fn parser_new(source :: ptr<u8>, length :: i64) -> Parser do
+    let lex :: Lexer = lexer_new(source, length)
+
+    -- Get first token
+    let res :: ScanResult = scan_token(lex)
+    let current :: Token = res.tok
+    lex = res.lex
+
+    -- Create empty previous token
+    let zero :: i64 = 0
+    let empty :: ptr<u8> = ""
+    let prev :: Token = Token { tok_type = zero, start = empty, start_offset = zero, length = zero, line = zero, column = zero, int_value = zero }
+
+    let p :: Parser = Parser { lex = lex, current = current, previous = prev, had_error = false, panic_mode = false }
+    ret p
+end
+
+-- Copy token text to a null-terminated string (strip quotes for strings)
+fn token_text_strip_quotes(tok :: Token) -> ptr<u8> do
+    let src :: ptr<u8> = ptr_add(tok.start, tok.start_offset + 1)
+    let len :: i64 = tok.length - 2
+    let alloc_size :: i64 = ((len + 8) / 8) * 8 + 8
+    let buf :: ptr<u8> = alloc(alloc_size)
+    let i :: i64 = 0
+    while i < alloc_size do
+        store_i64(ptr_add(buf, i), 0)
+        i = i + 8
+    end
+    let len_u64 :: u64 = len
+    memcpy(buf, src, len_u64)
+    ret buf
+end
+
+-- Copy token text to a null-terminated string
+fn token_text(tok :: Token) -> ptr<u8> do
+    let src :: ptr<u8> = ptr_add(tok.start, tok.start_offset)
+    let len :: i64 = tok.length
+    -- Allocate buffer with space for null terminator (round up to multiple of 8)
+    let alloc_size :: i64 = ((len + 8) / 8) * 8 + 8
+    let buf :: ptr<u8> = alloc(alloc_size)
+    -- Zero out the buffer first (ensures null termination)
+    let i :: i64 = 0
+    while i < alloc_size do
+        store_i64(ptr_add(buf, i), 0)
+        i = i + 8
+    end
+    -- Copy bytes using memcpy
+    let len_u64 :: u64 = len
+    memcpy(buf, src, len_u64)
+    ret buf
+end
+
+-- Advance to next token
+fn parser_advance(p :: Parser) -> Parser do
+    let new_prev :: Token = p.current
+    let res :: ScanResult = scan_token(p.lex)
+    let new_current :: Token = res.tok
+    let new_lex :: Lexer = res.lex
+
+    let new_p :: Parser = Parser { lex = new_lex, current = new_current, previous = new_prev, had_error = p.had_error, panic_mode = p.panic_mode }
+    ret new_p
+end
+
+-- Check if current token matches type
+fn check(p :: Parser, tok_type :: i64) -> bool do
+    let cur :: Token = p.current
+    ret cur.tok_type == tok_type
+end
+
+-- Check if current token matches and advance if so
+struct MatchResult do
+    p :: Parser
+    matched :: bool
+end
+
+fn match_tok(p :: Parser, tok_type :: i64) -> MatchResult do
+    if check(p, tok_type) do
+        let new_p :: Parser = parser_advance(p)
+        let res :: MatchResult = MatchResult { p = new_p, matched = true }
+        ret res
+    end
+    let res :: MatchResult = MatchResult { p = p, matched = false }
+    ret res
+end
+
+-- Report error at current token
+fn error_at_current(p :: Parser, msg :: ptr<u8>) -> Parser do
+    if p.panic_mode do
+        ret p
+    end
+
+    let cur :: Token = p.current
+    print("Error at line ")
+    print_int(cur.line)
+    print(": ")
+    print(msg)
+    println()
+
+    let new_p :: Parser = Parser { lex = p.lex, current = p.current, previous = p.previous, had_error = true, panic_mode = true }
+    ret new_p
+end
+
+-- NodeArray helper functions
+fn node_array_new() -> NodeArray do
+    let null_ptr :: ptr<u8> = 0
+    let arr :: NodeArray = NodeArray { data = null_ptr, count = 0, capacity = 0 }
+    ret arr
+end
+
+fn node_array_size() -> u64 do
+    -- Size of a pointer on 64-bit system
+    ret 8
+end
+
+fn node_array_push(arr :: NodeArray, node :: ptr<ASTNode>) -> NodeArray do
+    if arr.count >= arr.capacity do
+        -- Need to grow
+        let new_cap :: i64 = 8
+        if arr.capacity > 0 do
+            new_cap = arr.capacity * 2
+        end
+        let elem_size :: u64 = node_array_size()
+        let new_cap_u :: u64 = new_cap
+        let new_size :: u64 = new_cap_u * elem_size
+        let new_data :: ptr<u8> = alloc(new_size)
+
+        -- Copy old data if exists
+        if arr.count > 0 do
+            let old_count_u :: u64 = arr.count
+            let old_size :: u64 = old_count_u * elem_size
+            mem_copy(new_data, arr.data, old_size)
+        end
+
+        let new_arr :: NodeArray = NodeArray { data = new_data, count = arr.count, capacity = new_cap }
+        arr = new_arr
+    end
+
+    -- Store the pointer at position count
+    -- We need to cast and use pointer arithmetic
+    let offset :: i64 = arr.count * 8
+    let dest :: ptr<u8> = ptr_add(arr.data, offset)
+    -- Store 8 bytes of pointer value
+    store_ptr(dest, node)
+
+    let new_count :: i64 = arr.count + 1
+    let result :: NodeArray = NodeArray { data = arr.data, count = new_count, capacity = arr.capacity }
+    ret result
+end
+
+fn node_array_get(arr :: NodeArray, idx :: i64) -> ptr<ASTNode> do
+    let offset :: i64 = idx * 8
+    let src :: ptr<u8> = ptr_add(arr.data, offset)
+    let node :: ptr<ASTNode> = load_ptr(src)
+    ret node
+end
+
+-- Create a new AST node with kind set
+fn make_node(kind :: i64, line :: i64, col :: i64) -> ptr<ASTNode> do
+    -- Allocate memory for the node
+    let size :: u64 = 512  -- Large enough for ASTNode
+    let mem :: ptr<u8> = alloc(size)
+    let node :: ptr<ASTNode> = mem
+
+    -- Zero initialize
+    mem_zero(mem, size)
+
+    -- Set basic fields via store functions
+    store_i64(mem, kind)  -- kind is first field
+    let line_ptr :: ptr<u8> = ptr_add(mem, 8)
+    store_i64(line_ptr, line)
+    let col_ptr :: ptr<u8> = ptr_add(mem, 16)
+    store_i64(col_ptr, col)
+
+    ret node
+end
+
+-- Get node kind
+fn node_kind(node :: ptr<ASTNode>) -> i64 do
+    let p :: ptr<u8> = node
+    ret load_i64(p)
+end
+
+-- Set node int_value (for literals)
+fn node_set_int(node :: ptr<ASTNode>, val :: i64) -> void do
+    let p :: ptr<u8> = node
+    -- int_value is at offset 24 (after kind, line, column)
+    let dest :: ptr<u8> = ptr_add(p, 24)
+    store_i64(dest, val)
+end
+
+-- Set node name (for identifiers)
+fn node_set_name(node :: ptr<ASTNode>, name :: ptr<u8>) -> void do
+    let p :: ptr<u8> = node
+    -- name is at offset 56 (after kind, line, col, int_value, float_value, string_value, bool_value)
+    let dest :: ptr<u8> = ptr_add(p, 56)
+    store_ptr(dest, name)
+end
+
+-- Set node op (for binary/unary)
+fn node_set_op(node :: ptr<ASTNode>, op :: i64) -> void do
+    let p :: ptr<u8> = node
+    -- op is at offset 64
+    let dest :: ptr<u8> = ptr_add(p, 64)
+    store_i64(dest, op)
+end
+
+-- Set node left child
+fn node_set_left(node :: ptr<ASTNode>, left :: ptr<ASTNode>) -> void do
+    let p :: ptr<u8> = node
+    -- left is at offset 72
+    let dest :: ptr<u8> = ptr_add(p, 72)
+    store_ptr(dest, left)
+end
+
+-- Set node right child
+fn node_set_right(node :: ptr<ASTNode>, right :: ptr<ASTNode>) -> void do
+    let p :: ptr<u8> = node
+    -- right is at offset 80
+    let dest :: ptr<u8> = ptr_add(p, 80)
+    store_ptr(dest, right)
+end
+
+-- ============================================================
+-- Expression Parsing (Pratt parser / precedence climbing)
+-- ============================================================
+
+-- Result of parsing with updated parser state
+struct ParseResult do
+    p :: Parser
+    node :: ptr<ASTNode>
+end
+
+-- Result for parsing multiple arguments
+struct MoreArgsResult do
+    p :: Parser
+    args :: NodeArray
+end
+
+-- Consume expected token or report error
+fn consume(p :: Parser, tok_type :: i64, msg :: ptr<u8>) -> Parser do
+    let cur :: Token = p.current
+    if cur.tok_type == tok_type do
+        ret parser_advance(p)
+    end
+    ret error_at_current(p, msg)
+end
+
+-- Get precedence of binary operator
+fn get_precedence(tok_type :: i64) -> i64 do
+    -- OR has lowest precedence
+    if tok_type == TokenType::TOK_OR do ret 1 end
+    if tok_type == TokenType::TOK_AND do ret 2 end
+    -- Comparison operators
+    if tok_type == TokenType::TOK_EQEQ do ret 3 end
+    if tok_type == TokenType::TOK_NE do ret 3 end
+    if tok_type == TokenType::TOK_LT do ret 4 end
+    if tok_type == TokenType::TOK_LE do ret 4 end
+    if tok_type == TokenType::TOK_GT do ret 4 end
+    if tok_type == TokenType::TOK_GE do ret 4 end
+    -- Additive
+    if tok_type == TokenType::TOK_PLUS do ret 5 end
+    if tok_type == TokenType::TOK_MINUS do ret 5 end
+    -- Multiplicative
+    if tok_type == TokenType::TOK_STAR do ret 6 end
+    if tok_type == TokenType::TOK_SLASH do ret 6 end
+    if tok_type == TokenType::TOK_PERCENT do ret 6 end
+    ret 0
+end
+
+-- Map token type to binary op enum
+fn tok_to_binop(tok_type :: i64) -> i64 do
+    if tok_type == TokenType::TOK_PLUS do ret BinaryOp::BIN_ADD end
+    if tok_type == TokenType::TOK_MINUS do ret BinaryOp::BIN_SUB end
+    if tok_type == TokenType::TOK_STAR do ret BinaryOp::BIN_MUL end
+    if tok_type == TokenType::TOK_SLASH do ret BinaryOp::BIN_DIV end
+    if tok_type == TokenType::TOK_PERCENT do ret BinaryOp::BIN_MOD end
+    if tok_type == TokenType::TOK_EQEQ do ret BinaryOp::BIN_EQ end
+    if tok_type == TokenType::TOK_NE do ret BinaryOp::BIN_NE end
+    if tok_type == TokenType::TOK_LT do ret BinaryOp::BIN_LT end
+    if tok_type == TokenType::TOK_LE do ret BinaryOp::BIN_LE end
+    if tok_type == TokenType::TOK_GT do ret BinaryOp::BIN_GT end
+    if tok_type == TokenType::TOK_GE do ret BinaryOp::BIN_GE end
+    if tok_type == TokenType::TOK_AND do ret BinaryOp::BIN_AND end
+    if tok_type == TokenType::TOK_OR do ret BinaryOp::BIN_OR end
+    ret 0
+end
+
+-- Forward declarations handled by parsing in order
+-- Parse primary expression (literals, identifiers, grouping)
+fn parse_primary(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+
+    -- Integer literal
+    if cur.tok_type == TokenType::TOK_INT_LIT do
+        let node :: ptr<ASTNode> = make_node(NodeKind::NODE_LITERAL_INT, cur.line, cur.column)
+        node_set_int(node, cur.int_value)
+        let new_p :: Parser = parser_advance(p)
+        let res :: ParseResult = ParseResult { p = new_p, node = node }
+        ret res
+    end
+
+    -- Boolean literals
+    if cur.tok_type == TokenType::TOK_TRUE do
+        let node :: ptr<ASTNode> = make_node(NodeKind::NODE_LITERAL_BOOL, cur.line, cur.column)
+        -- Set bool_value to true (at appropriate offset)
+        let new_p :: Parser = parser_advance(p)
+        let res :: ParseResult = ParseResult { p = new_p, node = node }
+        ret res
+    end
+
+    if cur.tok_type == TokenType::TOK_FALSE do
+        let node :: ptr<ASTNode> = make_node(NodeKind::NODE_LITERAL_BOOL, cur.line, cur.column)
+        let new_p :: Parser = parser_advance(p)
+        let res :: ParseResult = ParseResult { p = new_p, node = node }
+        ret res
+    end
+
+    -- String literal
+    if cur.tok_type == TokenType::TOK_STRING_LIT do
+        let node :: ptr<ASTNode> = make_node(NodeKind::NODE_LITERAL_STRING, cur.line, cur.column)
+        -- Store string value (offset 40), stripping quotes from token
+        let str_text :: ptr<u8> = token_text_strip_quotes(cur)
+        let np :: ptr<u8> = node
+        store_ptr(ptr_add(np, 40), str_text)
+        let new_p :: Parser = parser_advance(p)
+        let res :: ParseResult = ParseResult { p = new_p, node = node }
+        ret res
+    end
+
+    -- Identifier (may be followed by call, member access, or index)
+    if cur.tok_type == TokenType::TOK_IDENT do
+        let node :: ptr<ASTNode> = make_node(NodeKind::NODE_IDENT, cur.line, cur.column)
+        node_set_name(node, token_text(cur))
+        let new_p :: Parser = parser_advance(p)
+
+        -- Check for function call: ident(args)
+        let next :: Token = new_p.current
+        if next.tok_type == TokenType::TOK_LPAREN do
+            -- Create call node
+            let call :: ptr<ASTNode> = make_node(NodeKind::NODE_CALL, cur.line, cur.column)
+            -- Store callee
+            let np :: ptr<u8> = call
+            let callee_dest :: ptr<u8> = ptr_add(np, 96)  -- callee offset
+            store_ptr(callee_dest, node)
+
+            new_p = parser_advance(new_p)  -- consume '('
+
+            -- Parse arguments
+            let args :: NodeArray = node_array_new()
+            let skip_tok :: Token = new_p.current
+            if skip_tok.tok_type != TokenType::TOK_RPAREN do
+                -- Parse arguments as expressions separated by comma
+                let arg :: ParseResult = parse_expression(new_p)
+                new_p = arg.p
+                args = node_array_push(args, arg.node)
+
+                -- Check for more arguments
+                let more_res :: MoreArgsResult = parse_more_args(new_p, args)
+                new_p = more_res.p
+                args = more_res.args
+            end
+
+            -- Store args to call node (data at 104, count at 112)
+            store_ptr(ptr_add(np, 104), args.data)
+            store_i64(ptr_add(np, 112), args.count)
+
+            new_p = consume(new_p, TokenType::TOK_RPAREN, "Expected ')' after arguments")
+            let res :: ParseResult = ParseResult { p = new_p, node = call }
+            ret res
+        end
+
+        -- Check for member access: ident.field
+        if next.tok_type == TokenType::TOK_DOT do
+            new_p = parser_advance(new_p)  -- consume '.'
+            let member_name :: Token = new_p.current
+            let member :: ptr<ASTNode> = make_node(NodeKind::NODE_MEMBER, cur.line, cur.column)
+            -- Store object
+            let np :: ptr<u8> = member
+            let obj_dest :: ptr<u8> = ptr_add(np, 72)  -- left field as object
+            store_ptr(obj_dest, node)
+            -- Store member name
+            node_set_name(member, member_name.start)
+            new_p = parser_advance(new_p)  -- consume field name
+            let res :: ParseResult = ParseResult { p = new_p, node = member }
+            ret res
+        end
+
+        -- Check for array index: ident[index]
+        if next.tok_type == TokenType::TOK_LBRACKET do
+            new_p = parser_advance(new_p)  -- consume '['
+            let idx_expr :: ParseResult = parse_expression(new_p)
+            new_p = idx_expr.p
+            new_p = consume(new_p, TokenType::TOK_RBRACKET, "Expected ] after index")
+            let index_node :: ptr<ASTNode> = make_node(NodeKind::NODE_INDEX, cur.line, cur.column)
+            let ip :: ptr<u8> = index_node
+            let arr_dest :: ptr<u8> = ptr_add(ip, 72)
+            store_ptr(arr_dest, node)
+            let idx_dest :: ptr<u8> = ptr_add(ip, 80)
+            store_ptr(idx_dest, idx_expr.node)
+            let res :: ParseResult = ParseResult { p = new_p, node = index_node }
+            ret res
+        end
+
+        -- Check for assignment: ident = expr
+        if next.tok_type == TokenType::TOK_EQ do
+            new_p = parser_advance(new_p)  -- consume '='
+            let value :: ParseResult = parse_expression(new_p)
+            new_p = value.p
+            let assign_node :: ptr<ASTNode> = make_node(NodeKind::NODE_ASSIGN, cur.line, cur.column)
+            let ap :: ptr<u8> = assign_node
+            node_set_left(assign_node, node)  -- left is the identifier
+            node_set_right(assign_node, value.node)  -- right is the value
+            let res :: ParseResult = ParseResult { p = new_p, node = assign_node }
+            ret res
+        end
+
+        let res :: ParseResult = ParseResult { p = new_p, node = node }
+        ret res
+    end
+
+    -- Grouped expression: (expr)
+    if cur.tok_type == TokenType::TOK_LPAREN do
+        let new_p :: Parser = parser_advance(p)
+        let inner :: ParseResult = parse_expression(new_p)
+        new_p = consume(inner.p, TokenType::TOK_RPAREN, "Expected ')' after expression")
+        let res :: ParseResult = ParseResult { p = new_p, node = inner.node }
+        ret res
+    end
+
+    -- Error case - return null node
+    let err_p :: Parser = error_at_current(p, "Expected expression")
+    let null_node :: ptr<ASTNode> = 0
+    let res :: ParseResult = ParseResult { p = err_p, node = null_node }
+    ret res
+end
+
+-- Parse additional function arguments after the first
+fn parse_more_args(p :: Parser, args :: NodeArray) -> MoreArgsResult do
+    let tok :: Token = p.current
+    if tok.tok_type == TokenType::TOK_COMMA do
+        p = parser_advance(p)
+        let arg :: ParseResult = parse_expression(p)
+        p = arg.p
+        args = node_array_push(args, arg.node)
+        ret parse_more_args(p, args)
+    end
+    let res :: MoreArgsResult = MoreArgsResult { p = p, args = args }
+    ret res
+end
+
+-- Parse unary expression
+fn parse_unary(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+
+    -- Unary minus
+    if cur.tok_type == TokenType::TOK_MINUS do
+        let new_p :: Parser = parser_advance(p)
+        let operand :: ParseResult = parse_unary(new_p)
+        let node :: ptr<ASTNode> = make_node(NodeKind::NODE_UNARY, cur.line, cur.column)
+        node_set_op(node, UnaryOp::UN_NEG)
+        -- Set operand (at offset 88)
+        let np :: ptr<u8> = node
+        let dest :: ptr<u8> = ptr_add(np, 88)
+        store_ptr(dest, operand.node)
+        let res :: ParseResult = ParseResult { p = operand.p, node = node }
+        ret res
+    end
+
+    -- Logical not
+    if cur.tok_type == TokenType::TOK_NOT do
+        let new_p :: Parser = parser_advance(p)
+        let operand :: ParseResult = parse_unary(new_p)
+        let node :: ptr<ASTNode> = make_node(NodeKind::NODE_UNARY, cur.line, cur.column)
+        node_set_op(node, UnaryOp::UN_NOT)
+        let np :: ptr<u8> = node
+        let dest :: ptr<u8> = ptr_add(np, 88)
+        store_ptr(dest, operand.node)
+        let res :: ParseResult = ParseResult { p = operand.p, node = node }
+        ret res
+    end
+
+    -- Address-of
+    if cur.tok_type == TokenType::TOK_AMP do
+        let new_p :: Parser = parser_advance(p)
+        let operand :: ParseResult = parse_unary(new_p)
+        let node :: ptr<ASTNode> = make_node(NodeKind::NODE_UNARY, cur.line, cur.column)
+        node_set_op(node, UnaryOp::UN_ADDR)
+        let np :: ptr<u8> = node
+        let dest :: ptr<u8> = ptr_add(np, 88)
+        store_ptr(dest, operand.node)
+        let res :: ParseResult = ParseResult { p = operand.p, node = node }
+        ret res
+    end
+
+    -- Otherwise parse primary
+    ret parse_primary(p)
+end
+
+-- Parse binary expression with precedence climbing
+fn parse_binary(p :: Parser, min_prec :: i64) -> ParseResult do
+    let left_res :: ParseResult = parse_unary(p)
+    let left :: ptr<ASTNode> = left_res.node
+    p = left_res.p
+
+    -- Loop while we have operators with sufficient precedence
+    let done :: bool = false
+    if done == false do
+        let cur :: Token = p.current
+        let prec :: i64 = get_precedence(cur.tok_type)
+
+        if prec >= min_prec do
+            let op :: i64 = tok_to_binop(cur.tok_type)
+            let op_line :: i64 = cur.line
+            let op_col :: i64 = cur.column
+
+            p = parser_advance(p)
+
+            -- Parse right side with higher precedence
+            let next_prec :: i64 = prec + 1
+            let right_res :: ParseResult = parse_binary(p, next_prec)
+            p = right_res.p
+
+            -- Create binary node
+            let node :: ptr<ASTNode> = make_node(NodeKind::NODE_BINARY, op_line, op_col)
+            node_set_op(node, op)
+            node_set_left(node, left)
+            node_set_right(node, right_res.node)
+
+            -- Recurse to handle more operators at same or higher precedence
+            let cont_res :: ParseResult = parse_binary_cont(p, node, min_prec)
+            let res :: ParseResult = ParseResult { p = cont_res.p, node = cont_res.node }
+            ret res
+        end
+    end
+
+    let res :: ParseResult = ParseResult { p = p, node = left }
+    ret res
+end
+
+-- Continue parsing binary operators (tail call optimization)
+fn parse_binary_cont(p :: Parser, left :: ptr<ASTNode>, min_prec :: i64) -> ParseResult do
+    let cur :: Token = p.current
+    let prec :: i64 = get_precedence(cur.tok_type)
+
+    if prec >= min_prec do
+        let op :: i64 = tok_to_binop(cur.tok_type)
+        let op_line :: i64 = cur.line
+        let op_col :: i64 = cur.column
+
+        p = parser_advance(p)
+
+        let next_prec :: i64 = prec + 1
+        let right_res :: ParseResult = parse_binary(p, next_prec)
+        p = right_res.p
+
+        let node :: ptr<ASTNode> = make_node(NodeKind::NODE_BINARY, op_line, op_col)
+        node_set_op(node, op)
+        node_set_left(node, left)
+        node_set_right(node, right_res.node)
+
+        ret parse_binary_cont(p, node, min_prec)
+    end
+
+    let res :: ParseResult = ParseResult { p = p, node = left }
+    ret res
+end
+
+-- Parse full expression
+fn parse_expression(p :: Parser) -> ParseResult do
+    ret parse_binary(p, 1)
+end
+
+-- ============================================================
+-- Statement Parsing
+-- ============================================================
+
+-- Parse return statement: ret <expr>
+fn parse_return(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)  -- consume 'ret'
+
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_RETURN, cur.line, cur.column)
+
+    -- Parse return value if not at end/block terminator
+    let check_cur :: Token = p.current
+    if check_cur.tok_type != TokenType::TOK_END do
+        let expr :: ParseResult = parse_expression(p)
+        p = expr.p
+        -- Store return value in node.init field
+        let np :: ptr<u8> = node
+        let dest :: ptr<u8> = ptr_add(np, 152)  -- init offset
+        store_ptr(dest, expr.node)
+    end
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Skip a type expression (simplified)
+fn skip_type(p :: Parser) -> Parser do
+    let cur :: Token = p.current
+
+    -- Handle primitive types
+    if cur.tok_type == TokenType::TOK_I8 do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_I16 do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_I32 do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_I64 do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_U8 do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_U16 do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_U32 do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_U64 do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_F32 do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_F64 do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_BOOL do
+        ret parser_advance(p)
+    end
+    if cur.tok_type == TokenType::TOK_VOID do
+        ret parser_advance(p)
+    end
+
+    -- Handle ptr<T>
+    if cur.tok_type == TokenType::TOK_PTR do
+        p = parser_advance(p)
+        let lt :: Token = p.current
+        if lt.tok_type == TokenType::TOK_LT do
+            p = parser_advance(p)
+            p = skip_type(p)
+            p = consume(p, TokenType::TOK_GT, "Expected > after ptr type")
+        end
+        ret p
+    end
+
+    -- Handle identifier type
+    if cur.tok_type == TokenType::TOK_IDENT do
+        ret parser_advance(p)
+    end
+
+    ret p
+end
+
+-- Parse variable declaration: let <name> :: <type> = <expr>
+fn parse_var_decl(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)  -- consume 'let'
+
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_VAR_DECL, cur.line, cur.column)
+
+    -- Get variable name
+    let name_tok :: Token = p.current
+    if name_tok.tok_type != TokenType::TOK_IDENT do
+        p = error_at_current(p, "Expected variable name")
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+    node_set_name(node, token_text(name_tok))
+    p = parser_advance(p)
+
+    -- Expect ::
+    p = consume(p, TokenType::TOK_COLONCOLON, "Expected '::' after variable name")
+
+    -- Skip type for now (would need full type parsing)
+    -- Handle identifier types, primitive types, ptr<T>, etc.
+    p = skip_type(p)
+
+    -- Check for initializer
+    let eq_cur :: Token = p.current
+    if eq_cur.tok_type == TokenType::TOK_EQ do
+        p = parser_advance(p)  -- consume '='
+        let init :: ParseResult = parse_expression(p)
+        p = init.p
+        -- Store init in node
+        let np :: ptr<u8> = node
+        let dest :: ptr<u8> = ptr_add(np, 152)
+        store_ptr(dest, init.node)
+    end
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Parse if statement: if <cond> do <block> [elif <cond> do <block>]* [else do <block>] end
+fn parse_if(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)  -- consume 'if'
+
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_IF, cur.line, cur.column)
+
+    -- Parse condition
+    let cond :: ParseResult = parse_expression(p)
+    p = cond.p
+    -- Store condition
+    let np :: ptr<u8> = node
+    let cond_dest :: ptr<u8> = ptr_add(np, 192)  -- condition offset
+    store_ptr(cond_dest, cond.node)
+
+    -- Expect 'do'
+    p = consume(p, TokenType::TOK_DO, "Expected 'do' after if condition")
+
+    -- Parse then branch
+    let then_branch :: ParseResult = parse_block(p)
+    p = then_branch.p
+    let then_dest :: ptr<u8> = ptr_add(np, 200)  -- then_branch offset
+    store_ptr(then_dest, then_branch.node)
+
+    -- Check for else/elif
+    let check :: Token = p.current
+    if check.tok_type == TokenType::TOK_ELSE do
+        p = parser_advance(p)  -- consume 'else'
+        p = consume(p, TokenType::TOK_DO, "Expected 'do' after else")
+        let else_branch :: ParseResult = parse_block(p)
+        p = else_branch.p
+        let else_dest :: ptr<u8> = ptr_add(np, 208)  -- else_branch offset
+        store_ptr(else_dest, else_branch.node)
+    end
+
+    -- Expect 'end'
+    p = consume(p, TokenType::TOK_END, "Expected 'end' after if statement")
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Parse while statement: while <cond> do <block> end
+fn parse_while(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)  -- consume 'while'
+
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_WHILE, cur.line, cur.column)
+
+    -- Parse condition
+    let cond :: ParseResult = parse_expression(p)
+    p = cond.p
+    -- Store condition
+    let np :: ptr<u8> = node
+    let cond_dest :: ptr<u8> = ptr_add(np, 192)
+    store_ptr(cond_dest, cond.node)
+
+    -- Expect 'do'
+    p = consume(p, TokenType::TOK_DO, "Expected 'do' after while condition")
+
+    -- Parse body
+    let body :: ParseResult = parse_block(p)
+    p = body.p
+    let body_dest :: ptr<u8> = ptr_add(np, 200)
+    store_ptr(body_dest, body.node)
+
+    -- Expect 'end'
+    p = consume(p, TokenType::TOK_END, "Expected 'end' after while statement")
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Parse for loop: for init; cond; update do body end
+fn parse_for(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)
+
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_FOR, cur.line, cur.column)
+    let np :: ptr<u8> = node
+
+    -- Parse init
+    let init_tok :: Token = p.current
+    if init_tok.tok_type == TokenType::TOK_LET do
+        let init :: ParseResult = parse_var_decl(p)
+        p = init.p
+        let init_dest :: ptr<u8> = ptr_add(np, 184)
+        store_ptr(init_dest, init.node)
+    end
+
+    p = consume(p, TokenType::TOK_SEMICOLON, "Expected ; after for init")
+
+    -- Parse condition
+    let cond :: ParseResult = parse_expression(p)
+    p = cond.p
+    let cond_dest :: ptr<u8> = ptr_add(np, 192)
+    store_ptr(cond_dest, cond.node)
+
+    p = consume(p, TokenType::TOK_SEMICOLON, "Expected ; after for condition")
+
+    -- Parse update
+    let update :: ParseResult = parse_expression(p)
+    p = update.p
+    let update_dest :: ptr<u8> = ptr_add(np, 200)
+    store_ptr(update_dest, update.node)
+
+    p = consume(p, TokenType::TOK_DO, "Expected do after for header")
+
+    -- Parse body
+    let body :: ParseResult = parse_block(p)
+    p = body.p
+    let body_dest :: ptr<u8> = ptr_add(np, 208)
+    store_ptr(body_dest, body.node)
+
+    p = consume(p, TokenType::TOK_END, "Expected end after for body")
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Parse break statement
+fn parse_break(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_BREAK, cur.line, cur.column)
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Parse continue statement
+fn parse_continue(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_CONTINUE, cur.line, cur.column)
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Parse a single statement
+fn parse_statement(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+
+    -- Skip newlines
+    if cur.tok_type == TokenType::TOK_NEWLINE do
+        p = parser_advance(p)
+        ret parse_statement(p)
+    end
+
+    -- Return null if we hit 'end' or EOF (let caller handle)
+    if cur.tok_type == TokenType::TOK_END do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+
+    if cur.tok_type == TokenType::TOK_EOF do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+
+    if cur.tok_type == TokenType::TOK_RET do
+        ret parse_return(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_LET do
+        ret parse_var_decl(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_IF do
+        ret parse_if(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_WHILE do
+        ret parse_while(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_FOR do
+        ret parse_for(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_BREAK do
+        ret parse_break(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_CONTINUE do
+        ret parse_continue(p)
+    end
+
+    -- Expression statement
+    let expr :: ParseResult = parse_expression(p)
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_EXPR_STMT, cur.line, cur.column)
+    -- Store expression
+    let np :: ptr<u8> = node
+    let dest :: ptr<u8> = ptr_add(np, 72)  -- left field as expression
+    store_ptr(dest, expr.node)
+
+    let res :: ParseResult = ParseResult { p = expr.p, node = node }
+    ret res
+end
+
+-- Parse block of statements until 'end'
+fn parse_block(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_BLOCK, cur.line, cur.column)
+    let stmts :: NodeArray = node_array_new()
+
+    let done :: bool = false
+    if done == false do
+        let check :: Token = p.current
+        if check.tok_type != TokenType::TOK_END do
+            if check.tok_type != TokenType::TOK_EOF do
+                let stmt :: ParseResult = parse_statement(p)
+                p = stmt.p
+                -- Only push non-null statements
+                let null_check :: ptr<ASTNode> = 0
+                if stmt.node != null_check do
+                    stmts = node_array_push(stmts, stmt.node)
+                end
+                -- Recurse for more statements, passing node to store final stmts
+                let cont :: ParseResult = parse_block_cont(p, stmts, node)
+                p = cont.p
+            else do
+                -- At EOF - store empty stmts
+                let np :: ptr<u8> = node
+                store_ptr(ptr_add(np, 176), stmts.data)
+                store_i64(ptr_add(np, 184), stmts.count)
+            end
+        else do
+            -- At END - store empty stmts
+            let np :: ptr<u8> = node
+            store_ptr(ptr_add(np, 176), stmts.data)
+            store_i64(ptr_add(np, 184), stmts.count)
+        end
+    end
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Continue parsing block statements
+-- Pass node pointer so we can store final stmts when done
+fn parse_block_cont(p :: Parser, stmts :: NodeArray, node :: ptr<ASTNode>) -> ParseResult do
+    let check :: Token = p.current
+    if check.tok_type != TokenType::TOK_END do
+        if check.tok_type != TokenType::TOK_EOF do
+            let stmt :: ParseResult = parse_statement(p)
+            p = stmt.p
+            -- Only push if we got a valid statement
+            let null_check :: ptr<ASTNode> = 0
+            if stmt.node != null_check do
+                stmts = node_array_push(stmts, stmt.node)
+            end
+            ret parse_block_cont(p, stmts, node)
+        end
+    end
+
+    -- At END or EOF - store stmts to node
+    let np :: ptr<u8> = node
+    store_ptr(ptr_add(np, 176), stmts.data)
+    store_i64(ptr_add(np, 184), stmts.count)
+
+    let null_node :: ptr<ASTNode> = 0
+    let res :: ParseResult = ParseResult { p = p, node = null_node }
+    ret res
+end
+
+-- ============================================================
+-- Declaration Parsing
+-- ============================================================
+
+-- Parse function declaration (simplified)
+fn parse_fn_decl(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)  -- consume 'fn'
+
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_FN_DECL, cur.line, cur.column)
+
+    -- Get function name
+    let name_tok :: Token = p.current
+    node_set_name(node, token_text(name_tok))
+    p = parser_advance(p)
+
+    -- Expect (
+    p = consume(p, TokenType::TOK_LPAREN, "Expected '(' after function name")
+
+    -- Parse parameters
+    let params_result :: MoreArgsResult = parse_params(p)
+    p = params_result.p
+    let fn_params :: NodeArray = params_result.args
+
+    -- Store params in node (params.data at 128, params.count at 136)
+    let np :: ptr<u8> = node
+    store_ptr(ptr_add(np, 128), fn_params.data)
+    store_i64(ptr_add(np, 136), fn_params.count)
+
+    -- Expect )
+    p = consume(p, TokenType::TOK_RPAREN, "Expected ')' after parameters")
+
+    -- Expect ->
+    p = consume(p, TokenType::TOK_ARROW, "Expected '->' after parameters")
+
+    -- Skip return type
+    p = parser_advance(p)
+
+    -- Expect 'do'
+    p = consume(p, TokenType::TOK_DO, "Expected 'do' before function body")
+
+    -- Parse body
+    let body :: ParseResult = parse_block(p)
+    p = body.p
+
+    -- Store body in node
+    let body_dest :: ptr<u8> = ptr_add(np, 120)
+    store_ptr(body_dest, body.node)
+
+    -- Expect 'end'
+    p = consume(p, TokenType::TOK_END, "Expected 'end' after function body")
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Parse a single parameter: name :: type
+fn parse_param(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    if cur.tok_type != TokenType::TOK_IDENT do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+    let param :: ptr<ASTNode> = make_node(NodeKind::NODE_PARAM, cur.line, cur.column)
+    node_set_name(param, token_text(cur))
+    p = parser_advance(p)
+    p = consume(p, TokenType::TOK_COLONCOLON, "Expected :: after parameter name")
+    p = skip_type(p)
+    let res :: ParseResult = ParseResult { p = p, node = param }
+    ret res
+end
+
+-- Parse more parameters separated by comma
+fn parse_more_params(p :: Parser, param_list :: NodeArray) -> MoreArgsResult do
+    let tok :: Token = p.current
+    if tok.tok_type == TokenType::TOK_COMMA do
+        p = parser_advance(p)
+        let param :: ParseResult = parse_param(p)
+        p = param.p
+        let null_check :: ptr<ASTNode> = 0
+        if param.node != null_check do
+            param_list = node_array_push(param_list, param.node)
+        end
+        ret parse_more_params(p, param_list)
+    end
+    let res :: MoreArgsResult = MoreArgsResult { p = p, args = param_list }
+    ret res
+end
+
+-- Parse function parameters: (name :: type, ...)
+fn parse_params(p :: Parser) -> MoreArgsResult do
+    let param_list :: NodeArray = node_array_new()
+    let cur :: Token = p.current
+    if cur.tok_type == TokenType::TOK_RPAREN do
+        -- Empty parameter list
+        let res :: MoreArgsResult = MoreArgsResult { p = p, args = param_list }
+        ret res
+    end
+    -- Parse first parameter
+    let first :: ParseResult = parse_param(p)
+    p = first.p
+    let null_check :: ptr<ASTNode> = 0
+    if first.node != null_check do
+        param_list = node_array_push(param_list, first.node)
+    end
+    -- Parse more parameters
+    let more :: MoreArgsResult = parse_more_params(p, param_list)
+    ret more
+end
+
+-- Helper to skip until ) (kept for backwards compat)
+fn skip_until_rparen(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    if cur.tok_type != TokenType::TOK_RPAREN do
+        if cur.tok_type != TokenType::TOK_EOF do
+            p = parser_advance(p)
+            ret skip_until_rparen(p)
+        end
+    end
+    let null_node :: ptr<ASTNode> = 0
+    let res :: ParseResult = ParseResult { p = p, node = null_node }
+    ret res
+end
+
+-- Parse struct field: name :: Type
+fn parse_struct_field(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+
+    if cur.tok_type != TokenType::TOK_IDENT do
+        p = error_at_current(p, "Expected field name")
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+
+    let field :: ptr<ASTNode> = make_node(NodeKind::NODE_FIELD, cur.line, cur.column)
+    node_set_name(field, cur.start)
+    p = parser_advance(p)
+
+    p = consume(p, TokenType::TOK_COLONCOLON, "Expected :: after field name")
+
+    let type_tok :: Token = p.current
+    p = parser_advance(p)
+
+    let res :: ParseResult = ParseResult { p = p, node = field }
+    ret res
+end
+
+-- Parse struct fields until end
+fn parse_struct_fields(p :: Parser, fields :: NodeArray) -> ParseResult do
+    let cur :: Token = p.current
+
+    if cur.tok_type == TokenType::TOK_END do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+    if cur.tok_type == TokenType::TOK_EOF do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+
+    if cur.tok_type == TokenType::TOK_NEWLINE do
+        p = parser_advance(p)
+        ret parse_struct_fields(p, fields)
+    end
+
+    if cur.tok_type == TokenType::TOK_IDENT do
+        let field :: ParseResult = parse_struct_field(p)
+        p = field.p
+        fields = node_array_push(fields, field.node)
+        ret parse_struct_fields(p, fields)
+    end
+
+    p = error_at_current(p, "Expected field or end")
+    let null_node :: ptr<ASTNode> = 0
+    let res :: ParseResult = ParseResult { p = p, node = null_node }
+    ret res
+end
+
+-- Parse struct declaration: struct Name do ... end
+fn parse_struct_decl(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)
+
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_STRUCT_DECL, cur.line, cur.column)
+
+    let name_tok :: Token = p.current
+    if name_tok.tok_type != TokenType::TOK_IDENT do
+        p = error_at_current(p, "Expected struct name")
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+    node_set_name(node, token_text(name_tok))
+    p = parser_advance(p)
+
+    p = consume(p, TokenType::TOK_DO, "Expected do after struct name")
+
+    let fields :: NodeArray = node_array_new()
+    let cont :: ParseResult = parse_struct_fields(p, fields)
+    p = cont.p
+
+    let np :: ptr<u8> = node
+    let fields_dest :: ptr<u8> = ptr_add(np, 160)
+    store_ptr(fields_dest, fields.data)
+    let fields_count_dest :: ptr<u8> = ptr_add(np, 168)
+    store_i64(fields_count_dest, fields.count)
+
+    p = consume(p, TokenType::TOK_END, "Expected end after struct body")
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Parse enum variants until end
+fn parse_enum_variants(p :: Parser, variants :: NodeArray) -> ParseResult do
+    let cur :: Token = p.current
+
+    if cur.tok_type == TokenType::TOK_END do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+    if cur.tok_type == TokenType::TOK_EOF do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+
+    if cur.tok_type == TokenType::TOK_NEWLINE do
+        p = parser_advance(p)
+        ret parse_enum_variants(p, variants)
+    end
+
+    if cur.tok_type == TokenType::TOK_IDENT do
+        let variant :: ptr<ASTNode> = make_node(NodeKind::NODE_ENUM_VARIANT, cur.line, cur.column)
+        node_set_name(variant, cur.start)
+        variants = node_array_push(variants, variant)
+        p = parser_advance(p)
+        ret parse_enum_variants(p, variants)
+    end
+
+    p = error_at_current(p, "Expected enum variant name")
+    let null_node :: ptr<ASTNode> = 0
+    let res :: ParseResult = ParseResult { p = p, node = null_node }
+    ret res
+end
+
+-- Parse enum declaration: enum Name do ... end
+fn parse_enum_decl(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    p = parser_advance(p)
+
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_ENUM_DECL, cur.line, cur.column)
+
+    let name_tok :: Token = p.current
+    if name_tok.tok_type != TokenType::TOK_IDENT do
+        p = error_at_current(p, "Expected enum name")
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+    node_set_name(node, token_text(name_tok))
+    p = parser_advance(p)
+
+    p = consume(p, TokenType::TOK_DO, "Expected do after enum name")
+
+    let variants :: NodeArray = node_array_new()
+    let cont :: ParseResult = parse_enum_variants(p, variants)
+    p = cont.p
+
+    let np :: ptr<u8> = node
+    let variants_dest :: ptr<u8> = ptr_add(np, 160)
+    store_ptr(variants_dest, variants.data)
+    let variants_count_dest :: ptr<u8> = ptr_add(np, 168)
+    store_i64(variants_count_dest, variants.count)
+
+    p = consume(p, TokenType::TOK_END, "Expected end after enum body")
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Skip until we find 'end' token (consumes the end)
+fn skip_until_end(p :: Parser) -> Parser do
+    let cur :: Token = p.current
+    if cur.tok_type == TokenType::TOK_END do
+        p = parser_advance(p)
+        ret p
+    end
+    if cur.tok_type == TokenType::TOK_EOF do
+        ret p
+    end
+    p = parser_advance(p)
+    ret skip_until_end(p)
+end
+
+-- Skip @ directive (just consumes tokens until end of directive)
+fn skip_directive(p :: Parser) -> Parser do
+    p = parser_advance(p)
+    let name :: Token = p.current
+    if name.tok_type == TokenType::TOK_IDENT do
+        p = parser_advance(p)
+        let next :: Token = p.current
+        if next.tok_type == TokenType::TOK_STRING_LIT do
+            p = parser_advance(p)
+            let check :: Token = p.current
+            if check.tok_type == TokenType::TOK_DO do
+                ret skip_until_end(p)
+            end
+        end
+    end
+    ret p
+end
+
+-- Parse top-level declaration
+fn parse_declaration(p :: Parser) -> ParseResult do
+    -- Skip any leading newlines
+    let cur :: Token = p.current
+    if cur.tok_type == TokenType::TOK_NEWLINE do
+        p = parser_advance(p)
+        ret parse_declaration(p)
+    end
+
+    -- EOF is not an error - just return null
+    if cur.tok_type == TokenType::TOK_EOF do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+
+    if cur.tok_type == TokenType::TOK_FN do
+        ret parse_fn_decl(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_STRUCT do
+        ret parse_struct_decl(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_ENUM do
+        ret parse_enum_decl(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_AT do
+        p = skip_directive(p)
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+
+    p = error_at_current(p, "Expected declaration")
+    let null_node :: ptr<ASTNode> = 0
+    let res :: ParseResult = ParseResult { p = p, node = null_node }
+    ret res
+end
+
+-- Parse entire program
+fn parse_program(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    let node :: ptr<ASTNode> = make_node(NodeKind::NODE_PROGRAM, cur.line, cur.column)
+    let decls :: NodeArray = node_array_new()
+
+    -- Parse declarations until EOF
+    let done :: bool = false
+    if done == false do
+        let check :: Token = p.current
+        if check.tok_type != TokenType::TOK_EOF do
+            let decl :: ParseResult = parse_declaration(p)
+            p = decl.p
+            -- Only push non-null nodes (parse_declaration returns null for EOF/newlines)
+            let null_check :: ptr<ASTNode> = 0
+            if decl.node != null_check do
+                decls = node_array_push(decls, decl.node)
+            end
+            -- Continue parsing - pass node so it can store final decls
+            let cont :: ParseResult = parse_program_cont(p, decls, node)
+            p = cont.p
+        else do
+            -- No declarations - store empty decls
+            let np :: ptr<u8> = node
+            let data_dest :: ptr<u8> = ptr_add(np, 160)
+            store_ptr(data_dest, decls.data)
+            let count_dest :: ptr<u8> = ptr_add(np, 168)
+            store_i64(count_dest, decls.count)
+        end
+    end
+
+    let res :: ParseResult = ParseResult { p = p, node = node }
+    ret res
+end
+
+-- Continue parsing program declarations
+-- Takes node pointer so we can store final decls count when done
+fn parse_program_cont(p :: Parser, decls :: NodeArray, node :: ptr<ASTNode>) -> ParseResult do
+    let check :: Token = p.current
+    if check.tok_type != TokenType::TOK_EOF do
+        if p.had_error == false do
+            let decl :: ParseResult = parse_declaration(p)
+            p = decl.p
+            -- Only push non-null nodes
+            let null_check :: ptr<ASTNode> = 0
+            if decl.node != null_check do
+                decls = node_array_push(decls, decl.node)
+            end
+            ret parse_program_cont(p, decls, node)
+        end
+    end
+    -- At EOF or error - store final decls to node
+    let np :: ptr<u8> = node
+    let data_dest :: ptr<u8> = ptr_add(np, 160)
+    store_ptr(data_dest, decls.data)
+    let count_dest :: ptr<u8> = ptr_add(np, 168)
+    store_i64(count_dest, decls.count)
+
+    let null_node :: ptr<ASTNode> = 0
+    let res :: ParseResult = ParseResult { p = p, node = null_node }
+    ret res
+end
+
+-- ============================================================
+-- Test Function
+-- ============================================================
+
+-- Simple test function
+fn parser_test() -> i32 do
+    print("=== Parser Tests ===")
+    println()
+
+    -- Test 1: Expression parsing
+    print("Test 1: Parse '1 + 2 * 3'")
+    println()
+    let expr_src :: ptr<u8> = "1 + 2 * 3"
+    let expr_len :: i64 = 9
+    let ep :: Parser = parser_new(expr_src, expr_len)
+    let expr_result :: ParseResult = parse_expression(ep)
+    let null_check :: ptr<ASTNode> = 0
+    if expr_result.node != null_check do
+        let kind :: i64 = node_kind(expr_result.node)
+        print("  Node kind: ")
+        print_int(kind)
+        print(" (expected 20=NODE_BINARY)")
+        println()
+    end
+
+    -- Test 2: Function parsing
+    print("Test 2: Parse function declaration")
+    println()
+    let fn_src :: ptr<u8> = "fn foo() -> i32 do ret 42 end"
+    let fn_len :: i64 = 29
+    let fp :: Parser = parser_new(fn_src, fn_len)
+    let fn_result :: ParseResult = parse_fn_decl(fp)
+    let fnp :: Parser = fn_result.p
+    if fnp.had_error do
+        print("  ERROR")
+        println()
+    else do
+        print("  SUCCESS")
+        println()
+    end
+
+    -- Test 3: Parse if statement
+    print("Test 3: Parse if statement")
+    println()
+    let if_src :: ptr<u8> = "if true do ret 1 end"
+    let if_len :: i64 = 20
+    let ifp :: Parser = parser_new(if_src, if_len)
+    let if_result :: ParseResult = parse_if(ifp)
+    let ifpp :: Parser = if_result.p
+    if ifpp.had_error do
+        print("  ERROR")
+        println()
+    else do
+        let if_kind :: i64 = node_kind(if_result.node)
+        print("  SUCCESS (kind=")
+        print_int(if_kind)
+        print(")")
+        println()
+    end
+
+    -- Test 4: Parse function call
+    print("Test 4: Parse function call 'foo(1, 2)'")
+    println()
+    let call_src :: ptr<u8> = "foo(1, 2)"
+    let call_len :: i64 = 9
+    let callp :: Parser = parser_new(call_src, call_len)
+    let call_result :: ParseResult = parse_expression(callp)
+    let call_kind :: i64 = node_kind(call_result.node)
+    print("  Node kind: ")
+    print_int(call_kind)
+    print(" (expected 22=NODE_CALL)")
+    println()
+
+    -- Test 5: Parse member access
+    print("Test 5: Parse member access 'obj.field'")
+    println()
+    let mem_src :: ptr<u8> = "obj.field"
+    let mem_len :: i64 = 9
+    let memp :: Parser = parser_new(mem_src, mem_len)
+    let mem_result :: ParseResult = parse_expression(memp)
+    let mem_kind :: i64 = node_kind(mem_result.node)
+    print("  Node kind: ")
+    print_int(mem_kind)
+    print(" (expected 23=NODE_MEMBER)")
+    println()
+
+    -- Test 6: Array index
+    print("Test 6: Array index")
+    println()
+    let idx_src :: ptr<u8> = "arr[0]"
+    let idx_len :: i64 = 6
+    let idxp :: Parser = parser_new(idx_src, idx_len)
+    let idx_result :: ParseResult = parse_expression(idxp)
+    let idx_kind :: i64 = node_kind(idx_result.node)
+    print("  kind=")
+    print_int(idx_kind)
+    print(" (expected 25=NODE_INDEX)")
+    println()
+
+    -- Test 7: Struct decl
+    print("Test 7: Struct decl")
+    println()
+    let st_src :: ptr<u8> = "struct Foo do x :: i64 end"
+    let st_len :: i64 = 26
+    let stp :: Parser = parser_new(st_src, st_len)
+    let st_result :: ParseResult = parse_struct_decl(stp)
+    let stpp :: Parser = st_result.p
+    if stpp.had_error do
+        print("  ERROR")
+    else do
+        print("  OK")
+    end
+    println()
+
+    -- Test 8: Enum decl
+    print("Test 8: Enum decl")
+    println()
+    let en_src :: ptr<u8> = "enum Color do RED GREEN end"
+    let en_len :: i64 = 27
+    let enp :: Parser = parser_new(en_src, en_len)
+    let en_result :: ParseResult = parse_enum_decl(enp)
+    let enpp :: Parser = en_result.p
+    if enpp.had_error do
+        print("  ERROR")
+    else do
+        print("  OK")
+    end
+    println()
+
+    -- Test 9: Break
+    print("Test 9: Break")
+    println()
+    let brk_src :: ptr<u8> = "break"
+    let brk_len :: i64 = 5
+    let brkp :: Parser = parser_new(brk_src, brk_len)
+    let brk_result :: ParseResult = parse_break(brkp)
+    let brk_kind :: i64 = node_kind(brk_result.node)
+    print("  kind=")
+    print_int(brk_kind)
+    println()
+
+    -- Test 10: For simple
+    print("Test 10: For")
+    println()
+    let f_src :: ptr<u8> = "for let i :: i64 = 0; i < 10; i + 1 do break end"
+    let f_len :: i64 = 48
+    let fp2 :: Parser = parser_new(f_src, f_len)
+    let f_result :: ParseResult = parse_for(fp2)
+    let fp2p :: Parser = f_result.p
+    if fp2p.had_error do
+        print("  ERROR")
+    else do
+        print("  OK")
+    end
+    println()
+
+    -- Test 11: Parse complete program
+    print("Test 11: Parse program")
+    println()
+    let prog_src :: ptr<u8> = "fn main() -> i32 do ret 0 end"
+    let prog_len :: i64 = 29
+    let progp :: Parser = parser_new(prog_src, prog_len)
+    let prog_result :: ParseResult = parse_program(progp)
+    let progpp :: Parser = prog_result.p
+    if progpp.had_error do
+        print("  ERROR")
+    else do
+        print("  OK")
+    end
+    println()
+
+    -- Test 12: Function with vars and while
+    print("Test 12: Function with while")
+    println()
+    let sum_src :: ptr<u8> = "fn test() -> i64 do let x :: i64 = 0 while x < 10 do break end ret x end"
+    let sum_len :: i64 = 73
+    let sump :: Parser = parser_new(sum_src, sum_len)
+    let sum_result :: ParseResult = parse_fn_decl(sump)
+    let sumpp :: Parser = sum_result.p
+    if sumpp.had_error do
+        print("  ERROR")
+    else do
+        print("  OK")
+    end
+    println()
+
+    println()
+    print("=== All tests passed ===")
+    println()
+    ret 0
+end
+
+fn parser_main() -> i32 do
+    ret parser_test()
+end

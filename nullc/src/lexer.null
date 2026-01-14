@@ -1,0 +1,786 @@
+-- nullc/lexer.null
+-- Lexer for the null language, written in null
+-- This is part of the self-hosting compiler
+
+@use "std/io.null"
+@use "std/mem.null"
+@use "std/string.null"
+@use "std/file.null"
+
+-- Token types
+enum TokenType do
+    -- Literals
+    TOK_INT_LIT
+    TOK_FLOAT_LIT
+    TOK_STRING_LIT
+    TOK_IDENT
+
+    -- Keywords
+    TOK_FN
+    TOK_LET
+    TOK_MUT
+    TOK_CONST
+    TOK_STRUCT
+    TOK_ENUM
+    TOK_IF
+    TOK_ELIF
+    TOK_ELSE
+    TOK_WHILE
+    TOK_FOR
+    TOK_IN
+    TOK_MATCH
+    TOK_RET
+    TOK_BREAK
+    TOK_CONTINUE
+    TOK_DO
+    TOK_END
+    TOK_AND
+    TOK_OR
+    TOK_NOT
+    TOK_TRUE
+    TOK_FALSE
+    TOK_AS
+
+    -- Types
+    TOK_I8
+    TOK_I16
+    TOK_I32
+    TOK_I64
+    TOK_U8
+    TOK_U16
+    TOK_U32
+    TOK_U64
+    TOK_F32
+    TOK_F64
+    TOK_BOOL
+    TOK_VOID
+    TOK_PTR
+
+    -- Operators
+    TOK_PLUS
+    TOK_MINUS
+    TOK_STAR
+    TOK_SLASH
+    TOK_PERCENT
+    TOK_AMP
+    TOK_PIPE
+    TOK_CARET
+    TOK_TILDE
+    TOK_LSHIFT
+    TOK_RSHIFT
+    TOK_EQ
+    TOK_EQEQ
+    TOK_NE
+    TOK_LT
+    TOK_GT
+    TOK_LE
+    TOK_GE
+    TOK_ARROW
+    TOK_FATARROW
+    TOK_COLONCOLON
+    TOK_DOTDOT
+    TOK_PIPEGT
+    TOK_QUESTION
+
+    -- Delimiters
+    TOK_LPAREN
+    TOK_RPAREN
+    TOK_LBRACKET
+    TOK_RBRACKET
+    TOK_LBRACE
+    TOK_RBRACE
+    TOK_COMMA
+    TOK_DOT
+    TOK_COLON
+    TOK_SEMICOLON
+    TOK_AT
+
+    -- Directives
+    TOK_DIR_USE
+    TOK_DIR_EXTERN
+    TOK_DIR_ALLOC
+    TOK_DIR_FREE
+
+    -- Special
+    TOK_NEWLINE
+    TOK_EOF
+    TOK_ERROR
+end
+
+-- Token structure
+struct Token do
+    tok_type :: i64      -- TokenType enum value
+    start :: ptr<u8>     -- Pointer to source (base)
+    start_offset :: i64  -- Offset from source to token start
+    length :: i64        -- Length of token
+    line :: i64          -- Line number
+    column :: i64        -- Column number
+    int_value :: i64     -- For integer literals
+end
+
+-- Scan result - returns updated lexer and token
+struct ScanResult do
+    lex :: Lexer
+    tok :: Token
+end
+
+-- Lexer state - using offsets instead of pointers for easier manipulation
+struct Lexer do
+    source :: ptr<u8>    -- Source code
+    source_len :: i64    -- Length of source
+    start :: i64         -- Offset of start of current token
+    current :: i64       -- Current position offset
+    line :: i64          -- Current line number
+    column :: i64        -- Current column
+    start_column :: i64  -- Column at start of token
+end
+
+-- Create a new lexer
+fn lexer_new(src :: ptr<u8>, len :: i64) -> Lexer do
+    let one :: i64 = 1
+    let zero :: i64 = 0
+    let lex :: Lexer = Lexer { source = src, source_len = len, start = zero, current = zero, line = one, column = one, start_column = one }
+    ret lex
+end
+
+-- Check if at end of source
+fn is_at_end(lex :: Lexer) -> bool do
+    ret lex.current >= lex.source_len
+end
+
+-- Get current character without advancing
+fn peek_char(lex :: Lexer) -> u8 do
+    if lex.current >= lex.source_len do
+        let zero :: u8 = 0
+        ret zero
+    end
+    ret lex.source[lex.current]
+end
+
+-- Peek at next character (one ahead)
+fn peek_next(lex :: Lexer) -> u8 do
+    let next :: i64 = lex.current + 1
+    if next >= lex.source_len do
+        let zero :: u8 = 0
+        ret zero
+    end
+    ret lex.source[next]
+end
+
+-- Character classification functions
+fn is_digit(c :: u8) -> bool do
+    let zero :: u8 = 48  -- '0'
+    let nine :: u8 = 57  -- '9'
+    ret c >= zero and c <= nine
+end
+
+fn is_alpha(c :: u8) -> bool do
+    let a :: u8 = 97   -- 'a'
+    let z :: u8 = 122  -- 'z'
+    let A :: u8 = 65   -- 'A'
+    let Z :: u8 = 90   -- 'Z'
+    let underscore :: u8 = 95  -- '_'
+    ret (c >= a and c <= z) or (c >= A and c <= Z) or c == underscore
+end
+
+fn is_alnum(c :: u8) -> bool do
+    ret is_alpha(c) or is_digit(c)
+end
+
+fn is_whitespace(c :: u8) -> bool do
+    let space :: u8 = 32    -- ' '
+    let tab :: u8 = 9       -- '\t'
+    let cr :: u8 = 13       -- '\r'
+    ret c == space or c == tab or c == cr
+end
+
+fn is_newline(c :: u8) -> bool do
+    let nl :: u8 = 10  -- '\n'
+    ret c == nl
+end
+
+-- Advance the lexer by one character, return the consumed character
+-- Returns a tuple-like struct with updated lexer and consumed char
+struct AdvanceResult do
+    lex :: Lexer
+    ch :: u8
+end
+
+fn advance(lex :: Lexer) -> AdvanceResult do
+    let c :: u8 = peek_char(lex)
+    let new_current :: i64 = lex.current + 1
+    let new_column :: i64 = lex.column + 1
+    let new_lex :: Lexer = Lexer { source = lex.source, source_len = lex.source_len, start = lex.start, current = new_current, line = lex.line, column = new_column, start_column = lex.start_column }
+    let res :: AdvanceResult = AdvanceResult { lex = new_lex, ch = c }
+    ret res
+end
+
+-- Skip whitespace (not newlines) - recursive implementation since no mutation
+fn skip_whitespace(lex :: Lexer) -> Lexer do
+    if is_at_end(lex) do
+        ret lex
+    end
+    if is_whitespace(peek_char(lex)) do
+        let adv :: AdvanceResult = advance(lex)
+        ret skip_whitespace(adv.lex)
+    end
+    ret lex
+end
+
+-- Skip a line comment (-- to newline) - recursive implementation
+fn skip_line_comment(lex :: Lexer) -> Lexer do
+    if is_at_end(lex) do
+        ret lex
+    end
+    let nl :: u8 = 10
+    if peek_char(lex) == nl do
+        ret lex
+    end
+    let adv :: AdvanceResult = advance(lex)
+    ret skip_line_comment(adv.lex)
+end
+
+-- Make a token from the current lexer state
+fn make_token(lex :: Lexer, ttype :: i64) -> Token do
+    let len :: i64 = lex.current - lex.start
+    let zero :: i64 = 0
+    let tok :: Token = Token { tok_type = ttype, start = lex.source, start_offset = lex.start, length = len, line = lex.line, column = lex.start_column, int_value = zero }
+    ret tok
+end
+
+fn make_token_with_value(lex :: Lexer, ttype :: i64, val :: i64) -> Token do
+    let len :: i64 = lex.current - lex.start
+    let tok :: Token = Token { tok_type = ttype, start = lex.source, start_offset = lex.start, length = len, line = lex.line, column = lex.start_column, int_value = val }
+    ret tok
+end
+
+fn make_error_token(lex :: Lexer) -> Token do
+    let err :: i64 = TokenType::TOK_ERROR
+    ret make_token(lex, err)
+end
+
+-- Mark the current position as the start of a new token
+fn start_token(lex :: Lexer) -> Lexer do
+    let new_lex :: Lexer = Lexer { source = lex.source, source_len = lex.source_len, start = lex.current, current = lex.current, line = lex.line, column = lex.column, start_column = lex.column }
+    ret new_lex
+end
+
+-- Handle newline (advance and update line/column)
+fn handle_newline(lex :: Lexer) -> Lexer do
+    let new_line :: i64 = lex.line + 1
+    let one :: i64 = 1
+    let new_current :: i64 = lex.current + 1
+    let new_lex :: Lexer = Lexer { source = lex.source, source_len = lex.source_len, start = lex.start, current = new_current, line = new_line, column = one, start_column = lex.start_column }
+    ret new_lex
+end
+
+-- Scan an integer literal
+fn scan_number(lex :: Lexer) -> ScanResult do
+    let cur :: Lexer = lex
+
+    -- Consume digits
+    while not is_at_end(cur) and is_digit(peek_char(cur)) do
+        let adv :: AdvanceResult = advance(cur)
+        cur = adv.lex
+    end
+
+    -- Calculate value
+    let val :: i64 = 0
+    let i :: i64 = lex.start
+    while i < cur.current do
+        let digit :: u8 = lex.source[i]
+        let zero_char :: u8 = 48
+        let digit_val :: i64 = digit - zero_char
+        val = val * 10 + digit_val
+        i = i + 1
+    end
+
+    let tok_type :: i64 = TokenType::TOK_INT_LIT
+    let tok :: Token = make_token_with_value(cur, tok_type, val)
+    let res :: ScanResult = ScanResult { lex = cur, tok = tok }
+    ret res
+end
+
+-- Check if identifier matches a specific keyword
+fn check_kw(src :: ptr<u8>, start :: i64, len :: i64, kw :: ptr<u8>, kwlen :: i64) -> bool do
+    if len != kwlen do
+        ret false
+    end
+    let i :: i64 = 0
+    while i < len do
+        let a :: u8 = src[start + i]
+        let b :: u8 = kw[i]
+        if a != b do
+            ret false
+        end
+        i = i + 1
+    end
+    ret true
+end
+
+-- Get keyword token type (returns TOK_IDENT if not a keyword)
+fn identifier_type(src :: ptr<u8>, start :: i64, len :: i64) -> i64 do
+    let first :: u8 = src[start]
+
+    -- Check by first character for efficiency
+    let a :: u8 = 97   -- 'a'
+    let b :: u8 = 98   -- 'b'
+    let c :: u8 = 99   -- 'c'
+    let d :: u8 = 100  -- 'd'
+    let e :: u8 = 101  -- 'e'
+    let f :: u8 = 102  -- 'f'
+    let i :: u8 = 105  -- 'i'
+    let l :: u8 = 108  -- 'l'
+    let m :: u8 = 109  -- 'm'
+    let n :: u8 = 110  -- 'n'
+    let o :: u8 = 111  -- 'o'
+    let p :: u8 = 112  -- 'p'
+    let r :: u8 = 114  -- 'r'
+    let s :: u8 = 115  -- 's'
+    let t :: u8 = 116  -- 't'
+    let u :: u8 = 117  -- 'u'
+    let v :: u8 = 118  -- 'v'
+    let w :: u8 = 119  -- 'w'
+
+    if first == a do
+        let two :: i64 = 2
+        let three :: i64 = 3
+        if check_kw(src, start, len, "and", three) do ret TokenType::TOK_AND end
+        if check_kw(src, start, len, "as", two) do ret TokenType::TOK_AS end
+    elif first == b do
+        let four :: i64 = 4
+        let five :: i64 = 5
+        if check_kw(src, start, len, "bool", four) do ret TokenType::TOK_BOOL end
+        if check_kw(src, start, len, "break", five) do ret TokenType::TOK_BREAK end
+    elif first == c do
+        let five :: i64 = 5
+        let eight :: i64 = 8
+        if check_kw(src, start, len, "const", five) do ret TokenType::TOK_CONST end
+        if check_kw(src, start, len, "continue", eight) do ret TokenType::TOK_CONTINUE end
+    elif first == d do
+        let two :: i64 = 2
+        if check_kw(src, start, len, "do", two) do ret TokenType::TOK_DO end
+    elif first == e do
+        let three :: i64 = 3
+        let four :: i64 = 4
+        if check_kw(src, start, len, "end", three) do ret TokenType::TOK_END end
+        if check_kw(src, start, len, "else", four) do ret TokenType::TOK_ELSE end
+        if check_kw(src, start, len, "elif", four) do ret TokenType::TOK_ELIF end
+        if check_kw(src, start, len, "enum", four) do ret TokenType::TOK_ENUM end
+    elif first == f do
+        let two :: i64 = 2
+        let three :: i64 = 3
+        let five :: i64 = 5
+        if check_kw(src, start, len, "fn", two) do ret TokenType::TOK_FN end
+        if check_kw(src, start, len, "for", three) do ret TokenType::TOK_FOR end
+        if check_kw(src, start, len, "f32", three) do ret TokenType::TOK_F32 end
+        if check_kw(src, start, len, "f64", three) do ret TokenType::TOK_F64 end
+        if check_kw(src, start, len, "false", five) do ret TokenType::TOK_FALSE end
+    elif first == i do
+        let two :: i64 = 2
+        let three :: i64 = 3
+        if check_kw(src, start, len, "if", two) do ret TokenType::TOK_IF end
+        if check_kw(src, start, len, "in", two) do ret TokenType::TOK_IN end
+        if check_kw(src, start, len, "i8", two) do ret TokenType::TOK_I8 end
+        if check_kw(src, start, len, "i16", three) do ret TokenType::TOK_I16 end
+        if check_kw(src, start, len, "i32", three) do ret TokenType::TOK_I32 end
+        if check_kw(src, start, len, "i64", three) do ret TokenType::TOK_I64 end
+    elif first == l do
+        let three :: i64 = 3
+        if check_kw(src, start, len, "let", three) do ret TokenType::TOK_LET end
+    elif first == m do
+        let three :: i64 = 3
+        let five :: i64 = 5
+        if check_kw(src, start, len, "mut", three) do ret TokenType::TOK_MUT end
+        if check_kw(src, start, len, "match", five) do ret TokenType::TOK_MATCH end
+    elif first == n do
+        let three :: i64 = 3
+        if check_kw(src, start, len, "not", three) do ret TokenType::TOK_NOT end
+    elif first == o do
+        let two :: i64 = 2
+        if check_kw(src, start, len, "or", two) do ret TokenType::TOK_OR end
+    elif first == p do
+        let three :: i64 = 3
+        if check_kw(src, start, len, "ptr", three) do ret TokenType::TOK_PTR end
+    elif first == r do
+        let three :: i64 = 3
+        if check_kw(src, start, len, "ret", three) do ret TokenType::TOK_RET end
+    elif first == s do
+        let six :: i64 = 6
+        if check_kw(src, start, len, "struct", six) do ret TokenType::TOK_STRUCT end
+    elif first == t do
+        let four :: i64 = 4
+        if check_kw(src, start, len, "true", four) do ret TokenType::TOK_TRUE end
+    elif first == u do
+        let two :: i64 = 2
+        let three :: i64 = 3
+        if check_kw(src, start, len, "u8", two) do ret TokenType::TOK_U8 end
+        if check_kw(src, start, len, "u16", three) do ret TokenType::TOK_U16 end
+        if check_kw(src, start, len, "u32", three) do ret TokenType::TOK_U32 end
+        if check_kw(src, start, len, "u64", three) do ret TokenType::TOK_U64 end
+    elif first == v do
+        let four :: i64 = 4
+        if check_kw(src, start, len, "void", four) do ret TokenType::TOK_VOID end
+    elif first == w do
+        let five :: i64 = 5
+        if check_kw(src, start, len, "while", five) do ret TokenType::TOK_WHILE end
+    end
+
+    ret TokenType::TOK_IDENT
+end
+
+-- Scan an identifier or keyword
+fn scan_identifier(lex :: Lexer) -> ScanResult do
+    let cur :: Lexer = lex
+
+    -- Consume alphanumeric characters
+    while not is_at_end(cur) and is_alnum(peek_char(cur)) do
+        let adv :: AdvanceResult = advance(cur)
+        cur = adv.lex
+    end
+
+    -- Check for keywords
+    let len :: i64 = cur.current - lex.start
+    let tok_type :: i64 = identifier_type(lex.source, lex.start, len)
+
+    let tok :: Token = make_token(cur, tok_type)
+    let res :: ScanResult = ScanResult { lex = cur, tok = tok }
+    ret res
+end
+
+-- Scan a string literal
+fn scan_string(lex :: Lexer) -> ScanResult do
+    let cur :: Lexer = lex
+
+    -- Skip opening quote
+    let adv :: AdvanceResult = advance(cur)
+    cur = adv.lex
+
+    -- Consume until closing quote
+    let dquote :: u8 = 34
+    while not is_at_end(cur) and peek_char(cur) != dquote do
+        if is_newline(peek_char(cur)) do
+            cur = handle_newline(cur)
+        else do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+        end
+    end
+
+    -- Consume closing quote
+    if not is_at_end(cur) do
+        let adv3 :: AdvanceResult = advance(cur)
+        cur = adv3.lex
+    end
+
+    let tok_type :: i64 = TokenType::TOK_STRING_LIT
+    let tok :: Token = make_token(cur, tok_type)
+    let res :: ScanResult = ScanResult { lex = cur, tok = tok }
+    ret res
+end
+
+-- Main tokenization function
+fn scan_token(lex :: Lexer) -> ScanResult do
+    -- Skip whitespace and comments
+    let cur :: Lexer = skip_whitespace(lex)
+
+    -- Handle comments and newlines
+    while not is_at_end(cur) do
+        let c :: u8 = peek_char(cur)
+        let dash :: u8 = 45  -- '-'
+        let nl :: u8 = 10    -- '\n'
+
+        if c == nl do
+            -- Return newline token
+            let started :: Lexer = start_token(cur)
+            let newlined :: Lexer = handle_newline(started)
+            let tok_type :: i64 = TokenType::TOK_NEWLINE
+            let tok :: Token = make_token(newlined, tok_type)
+            let res :: ScanResult = ScanResult { lex = newlined, tok = tok }
+            ret res
+        elif c == dash and peek_next(cur) == dash do
+            -- Skip comment
+            cur = skip_line_comment(cur)
+            cur = skip_whitespace(cur)
+        else do
+            -- Not whitespace or comment, proceed to tokenize
+            break
+        end
+    end
+
+    -- Mark token start
+    cur = start_token(cur)
+
+    -- Check for EOF
+    if is_at_end(cur) do
+        let tok_type :: i64 = TokenType::TOK_EOF
+        let tok :: Token = make_token(cur, tok_type)
+        let res :: ScanResult = ScanResult { lex = cur, tok = tok }
+        ret res
+    end
+
+    let c :: u8 = peek_char(cur)
+    let adv :: AdvanceResult = advance(cur)
+    cur = adv.lex
+
+    -- Check for number
+    if is_digit(c) do
+        -- Rewind and scan number
+        cur = start_token(lex)
+        cur = skip_whitespace(cur)
+        cur = start_token(cur)
+        ret scan_number(cur)
+    end
+
+    -- Check for identifier/keyword
+    if is_alpha(c) do
+        cur = start_token(lex)
+        cur = skip_whitespace(cur)
+        cur = start_token(cur)
+        ret scan_identifier(cur)
+    end
+
+    -- Check for string
+    let dquote :: u8 = 34  -- '"'
+    if c == dquote do
+        cur = start_token(lex)
+        cur = skip_whitespace(cur)
+        cur = start_token(cur)
+        ret scan_string(cur)
+    end
+
+    -- Single-character tokens
+    let lparen :: u8 = 40   -- '('
+    let rparen :: u8 = 41   -- ')'
+    let lbracket :: u8 = 91 -- '['
+    let rbracket :: u8 = 93 -- ']'
+    let lbrace :: u8 = 123  -- '{'
+    let rbrace :: u8 = 125  -- '}'
+    let comma :: u8 = 44    -- ','
+    let dot :: u8 = 46      -- '.'
+    let colon :: u8 = 58    -- ':'
+    let semicolon :: u8 = 59 -- ';'
+    let at :: u8 = 64       -- '@'
+    let plus :: u8 = 43     -- '+'
+    let star :: u8 = 42     -- '*'
+    let slash :: u8 = 47    -- '/'
+    let percent :: u8 = 37  -- '%'
+    let amp :: u8 = 38      -- '&'
+    let pipe :: u8 = 124    -- '|'
+    let caret :: u8 = 94    -- '^'
+    let tilde :: u8 = 126   -- '~'
+    let question :: u8 = 63 -- '?'
+    let eq :: u8 = 61       -- '='
+    let lt :: u8 = 60       -- '<'
+    let gt :: u8 = 62       -- '>'
+    let bang :: u8 = 33     -- '!'
+    let dash :: u8 = 45     -- '-'
+
+    let tok_type :: i64 = TokenType::TOK_ERROR
+
+    if c == lparen do tok_type = TokenType::TOK_LPAREN
+    elif c == rparen do tok_type = TokenType::TOK_RPAREN
+    elif c == lbracket do tok_type = TokenType::TOK_LBRACKET
+    elif c == rbracket do tok_type = TokenType::TOK_RBRACKET
+    elif c == lbrace do tok_type = TokenType::TOK_LBRACE
+    elif c == rbrace do tok_type = TokenType::TOK_RBRACE
+    elif c == comma do tok_type = TokenType::TOK_COMMA
+    elif c == semicolon do tok_type = TokenType::TOK_SEMICOLON
+    elif c == at do tok_type = TokenType::TOK_AT
+    elif c == plus do tok_type = TokenType::TOK_PLUS
+    elif c == star do tok_type = TokenType::TOK_STAR
+    elif c == slash do tok_type = TokenType::TOK_SLASH
+    elif c == percent do tok_type = TokenType::TOK_PERCENT
+    elif c == amp do tok_type = TokenType::TOK_AMP
+    elif c == caret do tok_type = TokenType::TOK_CARET
+    elif c == tilde do tok_type = TokenType::TOK_TILDE
+    elif c == question do tok_type = TokenType::TOK_QUESTION
+    elif c == dot do
+        -- Check for ..
+        if peek_char(cur) == dot do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+            tok_type = TokenType::TOK_DOTDOT
+        else do
+            tok_type = TokenType::TOK_DOT
+        end
+    elif c == colon do
+        -- Check for ::
+        if peek_char(cur) == colon do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+            tok_type = TokenType::TOK_COLONCOLON
+        else do
+            tok_type = TokenType::TOK_COLON
+        end
+    elif c == eq do
+        -- Check for ==
+        if peek_char(cur) == eq do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+            tok_type = TokenType::TOK_EQEQ
+        else do
+            tok_type = TokenType::TOK_EQ
+        end
+    elif c == bang do
+        -- Check for !=
+        if peek_char(cur) == eq do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+            tok_type = TokenType::TOK_NE
+        end
+    elif c == lt do
+        -- Check for <=, <<
+        if peek_char(cur) == eq do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+            tok_type = TokenType::TOK_LE
+        elif peek_char(cur) == lt do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+            tok_type = TokenType::TOK_LSHIFT
+        else do
+            tok_type = TokenType::TOK_LT
+        end
+    elif c == gt do
+        -- Check for >=, >>
+        if peek_char(cur) == eq do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+            tok_type = TokenType::TOK_GE
+        elif peek_char(cur) == gt do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+            tok_type = TokenType::TOK_RSHIFT
+        else do
+            tok_type = TokenType::TOK_GT
+        end
+    elif c == dash do
+        -- Check for ->
+        if peek_char(cur) == gt do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+            tok_type = TokenType::TOK_ARROW
+        else do
+            tok_type = TokenType::TOK_MINUS
+        end
+    elif c == pipe do
+        -- Check for |>
+        if peek_char(cur) == gt do
+            let adv2 :: AdvanceResult = advance(cur)
+            cur = adv2.lex
+            tok_type = TokenType::TOK_PIPEGT
+        else do
+            tok_type = TokenType::TOK_PIPE
+        end
+    end
+
+    let tok :: Token = make_token(cur, tok_type)
+    let res :: ScanResult = ScanResult { lex = cur, tok = tok }
+    ret res
+end
+
+-- Helper to print token type name
+fn print_tok_type(t :: i64) -> void do
+    if t == TokenType::TOK_INT_LIT do print("INT_LIT")
+    elif t == TokenType::TOK_IDENT do print("IDENT")
+    elif t == TokenType::TOK_STRING_LIT do print("STRING")
+    elif t == TokenType::TOK_FN do print("FN")
+    elif t == TokenType::TOK_LET do print("LET")
+    elif t == TokenType::TOK_RET do print("RET")
+    elif t == TokenType::TOK_IF do print("IF")
+    elif t == TokenType::TOK_ELSE do print("ELSE")
+    elif t == TokenType::TOK_WHILE do print("WHILE")
+    elif t == TokenType::TOK_FOR do print("FOR")
+    elif t == TokenType::TOK_DO do print("DO")
+    elif t == TokenType::TOK_END do print("END")
+    elif t == TokenType::TOK_STRUCT do print("STRUCT")
+    elif t == TokenType::TOK_ENUM do print("ENUM")
+    elif t == TokenType::TOK_I32 do print("I32")
+    elif t == TokenType::TOK_I64 do print("I64")
+    elif t == TokenType::TOK_U8 do print("U8")
+    elif t == TokenType::TOK_PTR do print("PTR")
+    elif t == TokenType::TOK_BOOL do print("BOOL")
+    elif t == TokenType::TOK_VOID do print("VOID")
+    elif t == TokenType::TOK_TRUE do print("TRUE")
+    elif t == TokenType::TOK_FALSE do print("FALSE")
+    elif t == TokenType::TOK_LPAREN do print("LPAREN")
+    elif t == TokenType::TOK_RPAREN do print("RPAREN")
+    elif t == TokenType::TOK_LBRACE do print("LBRACE")
+    elif t == TokenType::TOK_RBRACE do print("RBRACE")
+    elif t == TokenType::TOK_COLONCOLON do print("COLONCOLON")
+    elif t == TokenType::TOK_COLON do print("COLON")
+    elif t == TokenType::TOK_ARROW do print("ARROW")
+    elif t == TokenType::TOK_EQ do print("EQ")
+    elif t == TokenType::TOK_EQEQ do print("EQEQ")
+    elif t == TokenType::TOK_NEWLINE do print("NEWLINE")
+    elif t == TokenType::TOK_EOF do print("EOF")
+    elif t == TokenType::TOK_ERROR do print("ERROR")
+    else do
+        print("TOK_")
+        print_int(t)
+    end
+end
+
+-- Simple test function
+fn lexer_test() -> i32 do
+    print("Lexer module loaded")
+    println()
+
+    -- Test scanning simple source
+    let src :: ptr<u8> = "fn add(a :: i32, b :: i32) -> i32 do ret a + b end"
+    let src_len :: i64 = 50
+    let lex :: Lexer = lexer_new(src, src_len)
+
+    print("Scanning: ")
+    print(src)
+    println()
+    println()
+
+    -- Scan tokens
+    let count :: i64 = 0
+    let done :: bool = false
+
+    while not done do
+        let res :: ScanResult = scan_token(lex)
+        lex = res.lex
+        let tok :: Token = res.tok
+
+        print("Token: ")
+        print_tok_type(tok.tok_type)
+        print(" len=")
+        print_int(tok.length)
+        if tok.tok_type == TokenType::TOK_INT_LIT do
+            print(" val=")
+            print_int(tok.int_value)
+        end
+        println()
+
+        count = count + 1
+
+        if tok.tok_type == TokenType::TOK_EOF do
+            done = true
+        end
+        if tok.tok_type == TokenType::TOK_ERROR do
+            done = true
+        end
+        if count > 20 do
+            print("Too many tokens, stopping")
+            println()
+            done = true
+        end
+    end
+
+    print("Total tokens: ")
+    print_int(count)
+    println()
+
+    print("lexer_test: PASS")
+    println()
+    ret 0
+end
+
+-- main function moved to parser.null for testing
+-- fn main() -> i32 do
+--     ret lexer_test()
+-- end

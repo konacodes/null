@@ -1,0 +1,212 @@
+-- nullc/src/types.null
+-- Type definitions for the null self-hosted compiler
+-- Contains Token, TokenKind, AST node types
+
+-- Token types
+enum TokenKind do
+    -- Literals
+    TOK_INT_LIT
+    TOK_FLOAT_LIT
+    TOK_STRING_LIT
+    TOK_IDENT
+
+    -- Keywords
+    TOK_FN
+    TOK_LET
+    TOK_MUT
+    TOK_CONST
+    TOK_STRUCT
+    TOK_ENUM
+    TOK_IF
+    TOK_ELIF
+    TOK_ELSE
+    TOK_WHILE
+    TOK_FOR
+    TOK_IN
+    TOK_MATCH
+    TOK_RET
+    TOK_BREAK
+    TOK_CONTINUE
+    TOK_DO
+    TOK_END
+    TOK_AND
+    TOK_OR
+    TOK_NOT
+    TOK_TRUE
+    TOK_FALSE
+    TOK_AS
+
+    -- Types
+    TOK_I8
+    TOK_I16
+    TOK_I32
+    TOK_I64
+    TOK_U8
+    TOK_U16
+    TOK_U32
+    TOK_U64
+    TOK_F32
+    TOK_F64
+    TOK_BOOL
+    TOK_VOID
+    TOK_PTR
+
+    -- Operators
+    TOK_PLUS
+    TOK_MINUS
+    TOK_STAR
+    TOK_SLASH
+    TOK_PERCENT
+    TOK_AMP
+    TOK_PIPE
+    TOK_CARET
+    TOK_TILDE
+    TOK_LSHIFT
+    TOK_RSHIFT
+    TOK_EQ
+    TOK_EQEQ
+    TOK_NE
+    TOK_LT
+    TOK_GT
+    TOK_LE
+    TOK_GE
+    TOK_ARROW
+    TOK_FATARROW
+    TOK_COLONCOLON
+    TOK_DOTDOT
+    TOK_PIPEGT
+    TOK_QUESTION
+
+    -- Delimiters
+    TOK_LPAREN
+    TOK_RPAREN
+    TOK_LBRACKET
+    TOK_RBRACKET
+    TOK_LBRACE
+    TOK_RBRACE
+    TOK_COMMA
+    TOK_DOT
+    TOK_COLON
+    TOK_SEMICOLON
+    TOK_AT
+
+    -- Directives
+    TOK_DIR_USE
+    TOK_DIR_EXTERN
+    TOK_DIR_ALLOC
+    TOK_DIR_FREE
+
+    -- Special
+    TOK_NEWLINE
+    TOK_EOF
+    TOK_ERROR
+end
+
+-- Token structure
+struct Token do
+    kind :: i64          -- TokenKind enum value
+    start :: ptr<u8>     -- Pointer to source (base)
+    start_offset :: i64  -- Offset from source to token start
+    length :: i64        -- Length of token
+    line :: i64          -- Line number
+    column :: i64        -- Column number
+    int_value :: i64     -- For integer literals
+end
+
+-- AST Node kinds
+enum NodeKind do
+    -- Declarations
+    NODE_PROGRAM
+    NODE_FN_DECL
+    NODE_STRUCT_DECL
+    NODE_ENUM_DECL
+    NODE_VAR_DECL
+    NODE_PARAM
+    NODE_EXTERN_BLOCK
+
+    -- Statements
+    NODE_BLOCK
+    NODE_RETURN
+    NODE_IF
+    NODE_WHILE
+    NODE_FOR
+    NODE_EXPR_STMT
+    NODE_BREAK
+    NODE_CONTINUE
+
+    -- Expressions
+    NODE_LITERAL_INT
+    NODE_LITERAL_FLOAT
+    NODE_LITERAL_STRING
+    NODE_LITERAL_BOOL
+    NODE_IDENT
+    NODE_BINARY
+    NODE_UNARY
+    NODE_CALL
+    NODE_INDEX
+    NODE_FIELD
+    NODE_ASSIGN
+    NODE_CAST
+    NODE_STRUCT_LIT
+    NODE_ARRAY_LIT
+end
+
+-- Binary operators
+enum BinOp do
+    BIN_ADD
+    BIN_SUB
+    BIN_MUL
+    BIN_DIV
+    BIN_MOD
+    BIN_EQ
+    BIN_NE
+    BIN_LT
+    BIN_LE
+    BIN_GT
+    BIN_GE
+    BIN_AND
+    BIN_OR
+    BIN_BAND
+    BIN_BOR
+    BIN_BXOR
+    BIN_LSHIFT
+    BIN_RSHIFT
+end
+
+-- Unary operators
+enum UnaryOp do
+    UNARY_NEG
+    UNARY_NOT
+    UNARY_BNOT
+    UNARY_ADDR
+    UNARY_DEREF
+end
+
+-- Type kinds
+enum TypeKind do
+    TYPE_I8
+    TYPE_I16
+    TYPE_I32
+    TYPE_I64
+    TYPE_U8
+    TYPE_U16
+    TYPE_U32
+    TYPE_U64
+    TYPE_F32
+    TYPE_F64
+    TYPE_BOOL
+    TYPE_VOID
+    TYPE_PTR
+    TYPE_ARRAY
+    TYPE_STRUCT
+    TYPE_ENUM
+    TYPE_FUNCTION
+end
+
+-- Type structure
+struct Type do
+    kind :: i64          -- TypeKind
+    name :: ptr<u8>      -- For struct/enum types
+    inner :: ptr<u8>     -- For ptr<T>, array<T> - points to inner Type
+    size :: i64          -- Size in bytes
+end
