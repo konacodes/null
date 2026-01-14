@@ -1,7 +1,43 @@
 # Scratchpad - Shared Agent Memory
 
-> **Last Updated:** 2026-01-13
-> **Current Phase:** 2.1 (Language Features)
+> **Last Updated:** 2026-01-14
+> **Current Phase:** 2 - M4 (Self-Hosted Parser)
+
+---
+
+## Current Milestone: M4 - Parser in Null
+
+**Status:** In Progress - Core parsing complete
+
+### Completed Features:
+- Expression parsing (binary, unary, literals)
+- Function declaration parsing
+- If/while/for statement parsing
+- Break/continue statements
+- Variable declarations with type parsing
+- Struct declaration parsing
+- Enum declaration parsing
+- Function call parsing
+- Member access parsing
+- Array index parsing
+- Complete program parsing
+
+### Tests Passing: 11/11
+1. Expression: `1 + 2 * 3`
+2. Function: `fn foo() -> i32 do ret 42 end`
+3. If statement: `if true do ret 1 end`
+4. Function call: `foo(1, 2)`
+5. Member access: `obj.field`
+6. Array index: `arr[0]`
+7. Struct decl: `struct Foo do x :: i64 end`
+8. Enum decl: `enum Color do RED GREEN end`
+9. Break: `break`
+10. For loop: `for let i :: i64 = 0; i < 10; i + 1 do break end`
+11. Program: `fn main() -> i32 do ret 0 end`
+
+### Key Files:
+- `nullc/parser.null` - Self-hosted parser (1500+ lines)
+- `nullc/lexer.null` - Self-hosted lexer (working)
 
 ---
 
@@ -44,17 +80,15 @@ typedef enum {
 
 ## Current Focus
 
-**Task:** Implement struct returns from functions
+**Task:** Complete M4 - Self-Hosted Parser
 
-**Status:** Not started
+**Status:** Core parsing complete, need validation
 
-**Approach:**
-1. Research LLVM sret convention
-2. Modify `codegen_function()` to detect struct return types
-3. Add hidden sret parameter for struct-returning functions
-4. Update call sites to pass destination pointer
-5. Write test case for struct returns
-6. Verify with both JIT and AOT
+**Remaining:**
+1. Add extern/use directive parsing
+2. Test parsing more complex programs
+3. Validate by attempting to parse lexer.null/parser.null
+4. Clean up and optimize
 
 ---
 
@@ -101,6 +135,14 @@ dynamic_array.null    NOT WRITTEN
 ---
 
 ## Session Log
+
+### Session N+1 (2026-01-14)
+- Major progress on M4 (self-hosted parser)
+- Implemented struct/enum declaration parsing
+- Implemented for/break/continue statement parsing
+- Added skip_type() for proper type handling in var decls
+- 11 tests passing
+- Parser can parse complete programs
 
 ### Session N (2026-01-13)
 - Created Phase 2 spec (prompt.md)

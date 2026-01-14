@@ -1512,6 +1512,21 @@ fn parser_test() -> i32 do
     end
     println()
 
+    -- Test 12: Function with vars and while
+    print("Test 12: Function with while")
+    println()
+    let sum_src :: ptr<u8> = "fn test() -> i64 do let x :: i64 = 0 while x < 10 do break end ret x end"
+    let sum_len :: i64 = 73
+    let sump :: Parser = parser_new(sum_src, sum_len)
+    let sum_result :: ParseResult = parse_fn_decl(sump)
+    let sumpp :: Parser = sum_result.p
+    if sumpp.had_error do
+        print("  ERROR")
+    else do
+        print("  OK")
+    end
+    println()
+
     println()
     print("=== All tests passed ===")
     println()
