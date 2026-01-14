@@ -488,7 +488,7 @@ fn parse_primary(p :: Parser) -> ParseResult do
     -- Identifier (may be followed by call, member access, or index)
     if cur.tok_type == TokenType::TOK_IDENT do
         let node :: ptr<ASTNode> = make_node(NodeKind::NODE_IDENT, cur.line, cur.column)
-        node_set_name(node, cur.start)
+        node_set_name(node, token_text(cur))
         let new_p :: Parser = parser_advance(p)
 
         -- Check for function call: ident(args)
@@ -1126,7 +1126,11 @@ fn parse_fn_decl(p :: Parser) -> ParseResult do
     -- Expect (
     p = consume(p, TokenType::TOK_LPAREN, "Expected '(' after function name")
 
-    -- Expect ) (skip parameters for now)
+    -- Skip parameters for now (skip until closing paren)
+    let skip :: ParseResult = skip_until_rparen(p)
+    p = skip.p
+
+    -- Expect )
     p = consume(p, TokenType::TOK_RPAREN, "Expected ')' after parameters")
 
     -- Expect ->

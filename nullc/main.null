@@ -24,13 +24,39 @@ fn get_return_value(ret_node :: ptr<u8>) -> i64 do
     ret val
 end
 
--- Emit a single statement (only handles return for now)
+-- Get function name from a call expression
+fn get_call_name(call_node :: ptr<u8>) -> ptr<u8> do
+    -- callee is at offset 96, it should be an identifier node
+    let callee :: ptr<u8> = load_ptr(ptr_add(call_node, 96))
+    -- identifier name is at offset 56
+    let name :: ptr<u8> = load_ptr(ptr_add(callee, 56))
+    ret name
+end
+
+-- Emit an expression (only handles calls for now)
+fn emit_expr(cg :: Codegen, expr :: ptr<u8>) -> Codegen do
+    let kind :: i64 = load_i64(expr)
+    -- NODE_CALL = 23
+    if kind == 23 do
+        let name :: ptr<u8> = get_call_name(expr)
+        cg = emit_call_void(cg, name)
+    end
+    ret cg
+end
+
+-- Emit a single statement
 fn emit_stmt(cg :: Codegen, stmt :: ptr<u8>) -> Codegen do
     let kind :: i64 = load_i64(stmt)
     -- NODE_RETURN = 9
     if kind == 9 do
         let val :: i64 = get_return_value(stmt)
         cg = emit_ret(cg, "i32", val)
+    end
+    -- NODE_EXPR_STMT = 13
+    if kind == 13 do
+        -- Expression is at offset 72 (left field)
+        let expr :: ptr<u8> = load_ptr(ptr_add(stmt, 72))
+        cg = emit_expr(cg, expr)
     end
     ret cg
 end
@@ -129,7 +155,7 @@ fn main() -> i32 do
     print("=== nullc Compiler ===")
     println()
 
-    let source :: ptr<u8> = file_read_all("/tmp/claude/test.null")
+    let source :: ptr<u8> = file_read_all("/tmp/claude/test_call.null")
     let null_ptr :: ptr<u8> = 0
     if source == null_ptr do
         print("Failed to read")
@@ -137,7 +163,7 @@ fn main() -> i32 do
         ret 1
     end
 
-    let f :: ptr<u8> = file_open_read("/tmp/claude/test.null")
+    let f :: ptr<u8> = file_open_read("/tmp/claude/test_call.null")
     let size :: i64 = file_size(f)
     file_close(f)
     print("Read ")
