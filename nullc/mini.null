@@ -272,7 +272,7 @@ end
 -- TOK_ARROW = 24, TOK_COMMA = 25, TOK_EQ = 26
 -- TOK_PLUS = 30, TOK_MINUS = 31, TOK_STAR = 32, TOK_SLASH = 33
 -- TOK_EQEQ = 34, TOK_NE = 35, TOK_LT = 36, TOK_LE = 37, TOK_GT = 38, TOK_GE = 39
--- TOK_LBRACKET = 40, TOK_RBRACKET = 41
+-- TOK_LBRACKET = 40, TOK_RBRACKET = 41, TOK_SHL = 42, TOK_SHR = 43, TOK_PIPE = 44
 
 -- ============================================================================
 -- Lexer state (manual: src at 0, pos at 8, len at 16, tok_type at 24,
@@ -402,6 +402,50 @@ fn lex_token_text(lex :: ptr<u8>) -> ptr<u8> do
     ret text
 end
 
+-- Process escape sequences in a string: \" -> ", \\ -> \, \n -> newline, \t -> tab
+fn unescape_string(s :: ptr<u8>) -> ptr<u8> do
+    let slen :: i64 = my_str_len(s)
+    let result :: ptr<u8> = alloc(slen + 1)
+    let i :: i64 = 0
+    let j :: i64 = 0
+    while i < slen do
+        let c :: i64 = load_byte(ptr_add(s, i))
+        if c == 92 do
+            -- Backslash: check next character
+            i = i + 1
+            if i < slen do
+                let next :: i64 = load_byte(ptr_add(s, i))
+                let out_char :: i64 = next
+                -- \n -> newline (10)
+                if next == 110 do
+                    out_char = 10
+                end
+                -- \t -> tab (9)
+                if next == 116 do
+                    out_char = 9
+                end
+                -- \r -> carriage return (13)
+                if next == 114 do
+                    out_char = 13
+                end
+                -- \0 -> null (0)
+                if next == 48 do
+                    out_char = 0
+                end
+                -- For \\, \", etc., out_char stays as 'next'
+                store_byte(ptr_add(result, j), out_char)
+                j = j + 1
+            end
+        else do
+            store_byte(ptr_add(result, j), c)
+            j = j + 1
+        end
+        i = i + 1
+    end
+    store_byte(ptr_add(result, j), 0)
+    ret result
+end
+
 fn lex_check_keyword(text :: ptr<u8>, kw :: ptr<u8>, tok :: i64) -> i64 do
     if my_str_eq(text, kw) == 1 do
         ret tok
@@ -409,23 +453,121 @@ fn lex_check_keyword(text :: ptr<u8>, kw :: ptr<u8>, tok :: i64) -> i64 do
     ret 0 - 1
 end
 
+-- Check if current position starts with "extern" (for @extern detection)
+fn lex_is_extern(lex :: ptr<u8>) -> i64 do
+    let src :: ptr<u8> = load_ptr(lex)
+    let pos :: i64 = load_i64(ptr_add(lex, 8))
+    let e1 :: i64 = load_byte(ptr_add(src, pos + 1))
+    let e2 :: i64 = load_byte(ptr_add(src, pos + 2))
+    let e3 :: i64 = load_byte(ptr_add(src, pos + 3))
+    let e4 :: i64 = load_byte(ptr_add(src, pos + 4))
+    let e5 :: i64 = load_byte(ptr_add(src, pos + 5))
+    let e6 :: i64 = load_byte(ptr_add(src, pos + 6))
+    -- Check for "extern" (101=e 120=x 116=t 101=e 114=r 110=n)
+    if e1 == 101 do
+        if e2 == 120 do
+            if e3 == 116 do
+                if e4 == 101 do
+                    if e5 == 114 do
+                        if e6 == 110 do
+                            ret 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+    ret 0
+end
+
+-- Check if current position starts with "end" followed by non-alphanumeric
+fn lex_is_end(lex :: ptr<u8>) -> i64 do
+    let src :: ptr<u8> = load_ptr(lex)
+    let pos :: i64 = load_i64(ptr_add(lex, 8))
+    let c1 :: i64 = load_byte(ptr_add(src, pos))
+    let c2 :: i64 = load_byte(ptr_add(src, pos + 1))
+    let c3 :: i64 = load_byte(ptr_add(src, pos + 2))
+    let c4 :: i64 = load_byte(ptr_add(src, pos + 3))
+    -- Check for "end" (101=e 110=n 100=d)
+    if c1 == 101 do
+        if c2 == 110 do
+            if c3 == 100 do
+                if is_alnum(c4) == 0 do
+                    ret 1
+                end
+            end
+        end
+    end
+    ret 0
+end
+
+-- Skip @extern block (called when @ and "extern" detected)
+fn lex_skip_extern_block(lex :: ptr<u8>) -> void do
+    -- Skip past current line (@extern "C" do)
+    let c :: i64 = lex_peek(lex)
+    while c != 10 do
+        if c == 0 do
+            ret
+        end
+        lex_advance(lex)
+        c = lex_peek(lex)
+    end
+    lex_advance(lex)
+    c = lex_peek(lex)
+    -- Look for "end" at start of line
+    let found :: i64 = 0
+    while found == 0 do
+        -- Skip whitespace
+        while c == 32 do
+            lex_advance(lex)
+            c = lex_peek(lex)
+        end
+        while c == 9 do
+            lex_advance(lex)
+            c = lex_peek(lex)
+        end
+        -- Check for "end"
+        if lex_is_end(lex) == 1 do
+            found = 1
+            lex_advance(lex)
+            lex_advance(lex)
+            lex_advance(lex)
+        else do
+            -- Skip to end of line
+            while c != 10 do
+                if c == 0 do
+                    ret
+                end
+                lex_advance(lex)
+                c = lex_peek(lex)
+            end
+            lex_advance(lex)
+            c = lex_peek(lex)
+        end
+    end
+end
+
 fn lex_next(lex :: ptr<u8>) -> i64 do
     lex_skip_ws(lex)
     let c :: i64 = lex_peek(lex)
 
-    -- Skip @ directives
+    -- Skip @ directives (including @extern blocks)
     while c == 64 do
-        -- Skip to end of line
-        lex_advance(lex)
-        c = lex_peek(lex)
-        while c != 10 do
-            if c == 0 do
-                store_i64(ptr_add(lex, 24), 0)
-                store_i64(ptr_add(lex, 40), 0)
-                ret 0
-            end
+        if lex_is_extern(lex) == 1 do
+            lex_skip_extern_block(lex)
+        else do
+            -- Regular @ directive - skip to end of line
             lex_advance(lex)
             c = lex_peek(lex)
+            while c != 10 do
+                if c == 0 do
+                    store_i64(ptr_add(lex, 24), 0)
+                    store_i64(ptr_add(lex, 40), 0)
+                    ret 0
+                end
+                lex_advance(lex)
+                c = lex_peek(lex)
+            end
         end
         lex_skip_ws(lex)
         c = lex_peek(lex)
@@ -533,7 +675,15 @@ fn lex_next(lex :: ptr<u8>) -> i64 do
                 store_i64(ptr_add(lex, 24), 0)
                 ret 0
             end
-            lex_advance(lex)
+            -- Handle escape sequences: skip char after backslash
+            if lex_peek(lex) == 92 do
+                lex_advance(lex)
+                if lex_peek(lex) != 0 do
+                    lex_advance(lex)
+                end
+            else do
+                lex_advance(lex)
+            end
         end
         let new_pos :: i64 = load_i64(ptr_add(lex, 8))
         store_i64(ptr_add(lex, 40), new_pos - load_i64(ptr_add(lex, 32)))
@@ -592,6 +742,12 @@ fn lex_next(lex :: ptr<u8>) -> i64 do
     end
 
     if c == 60 do
+        if next == 60 do
+            lex_advance(lex)
+            store_i64(ptr_add(lex, 40), 2)
+            store_i64(ptr_add(lex, 24), 42)
+            ret 42
+        end
         if next == 61 do
             lex_advance(lex)
             store_i64(ptr_add(lex, 40), 2)
@@ -604,6 +760,12 @@ fn lex_next(lex :: ptr<u8>) -> i64 do
     end
 
     if c == 62 do
+        if next == 62 do
+            lex_advance(lex)
+            store_i64(ptr_add(lex, 40), 2)
+            store_i64(ptr_add(lex, 24), 43)
+            ret 43
+        end
         if next == 61 do
             lex_advance(lex)
             store_i64(ptr_add(lex, 40), 2)
@@ -651,6 +813,12 @@ fn lex_next(lex :: ptr<u8>) -> i64 do
     if c == 93 do
         store_i64(ptr_add(lex, 24), 41)
         ret 41
+    end
+
+    -- Pipe (bitwise OR)
+    if c == 124 do
+        store_i64(ptr_add(lex, 24), 44)
+        ret 44
     end
 
     -- Unknown
@@ -914,7 +1082,7 @@ fn parse_primary(p :: ptr<u8>) -> ptr<u8> do
 
     -- String literal
     if tok == 3 do
-        let text :: ptr<u8> = lex_token_text(lex)
+        let text :: ptr<u8> = unescape_string(lex_token_text(lex))
         let node :: ptr<u8> = node_new(13)
         node_set_str(node, text)
         p_advance(p)
@@ -1056,13 +1224,55 @@ fn parse_add(p :: ptr<u8>) -> ptr<u8> do
     ret left
 end
 
-fn parse_cmp(p :: ptr<u8>) -> ptr<u8> do
+fn parse_shift(p :: ptr<u8>) -> ptr<u8> do
     let left :: ptr<u8> = parse_add(p)
+    let tok :: i64 = p_tok(p)
+    while tok == 42 do
+        p_advance(p)
+        let right :: ptr<u8> = parse_add(p)
+        let node :: ptr<u8> = node_new(9)
+        node_set_left(node, left)
+        node_set_right(node, right)
+        node_set_int(node, 10)
+        left = node
+        tok = p_tok(p)
+    end
+    while tok == 43 do
+        p_advance(p)
+        let right :: ptr<u8> = parse_add(p)
+        let node :: ptr<u8> = node_new(9)
+        node_set_left(node, left)
+        node_set_right(node, right)
+        node_set_int(node, 11)
+        left = node
+        tok = p_tok(p)
+    end
+    ret left
+end
+
+fn parse_or(p :: ptr<u8>) -> ptr<u8> do
+    let left :: ptr<u8> = parse_shift(p)
+    let tok :: i64 = p_tok(p)
+    while tok == 44 do
+        p_advance(p)
+        let right :: ptr<u8> = parse_or(p)
+        let node :: ptr<u8> = node_new(9)
+        node_set_left(node, left)
+        node_set_right(node, right)
+        node_set_int(node, 12)
+        left = node
+        tok = p_tok(p)
+    end
+    ret left
+end
+
+fn parse_cmp(p :: ptr<u8>) -> ptr<u8> do
+    let left :: ptr<u8> = parse_or(p)
     let tok :: i64 = p_tok(p)
 
     if tok == 34 do
         p_advance(p)
-        let right :: ptr<u8> = parse_add(p)
+        let right :: ptr<u8> = parse_or(p)
         let node :: ptr<u8> = node_new(9)
         node_set_left(node, left)
         node_set_right(node, right)
@@ -1071,7 +1281,7 @@ fn parse_cmp(p :: ptr<u8>) -> ptr<u8> do
     end
     if tok == 35 do
         p_advance(p)
-        let right :: ptr<u8> = parse_add(p)
+        let right :: ptr<u8> = parse_or(p)
         let node :: ptr<u8> = node_new(9)
         node_set_left(node, left)
         node_set_right(node, right)
@@ -1080,7 +1290,7 @@ fn parse_cmp(p :: ptr<u8>) -> ptr<u8> do
     end
     if tok == 36 do
         p_advance(p)
-        let right :: ptr<u8> = parse_add(p)
+        let right :: ptr<u8> = parse_or(p)
         let node :: ptr<u8> = node_new(9)
         node_set_left(node, left)
         node_set_right(node, right)
@@ -1089,7 +1299,7 @@ fn parse_cmp(p :: ptr<u8>) -> ptr<u8> do
     end
     if tok == 37 do
         p_advance(p)
-        let right :: ptr<u8> = parse_add(p)
+        let right :: ptr<u8> = parse_or(p)
         let node :: ptr<u8> = node_new(9)
         node_set_left(node, left)
         node_set_right(node, right)
@@ -1098,7 +1308,7 @@ fn parse_cmp(p :: ptr<u8>) -> ptr<u8> do
     end
     if tok == 38 do
         p_advance(p)
-        let right :: ptr<u8> = parse_add(p)
+        let right :: ptr<u8> = parse_or(p)
         let node :: ptr<u8> = node_new(9)
         node_set_left(node, left)
         node_set_right(node, right)
@@ -1107,7 +1317,7 @@ fn parse_cmp(p :: ptr<u8>) -> ptr<u8> do
     end
     if tok == 39 do
         p_advance(p)
-        let right :: ptr<u8> = parse_add(p)
+        let right :: ptr<u8> = parse_or(p)
         let node :: ptr<u8> = node_new(9)
         node_set_left(node, left)
         node_set_right(node, right)
@@ -1577,6 +1787,15 @@ fn cg_expr(cg :: ptr<u8>, node :: ptr<u8>) -> i64 do
         if op == 9 do
             cg_emit(cg, " = icmp sge i64 ")
         end
+        if op == 10 do
+            cg_emit(cg, " = shl i64 ")
+        end
+        if op == 11 do
+            cg_emit(cg, " = lshr i64 ")
+        end
+        if op == 12 do
+            cg_emit(cg, " = or i64 ")
+        end
 
         if left_imm == 1 do
             cg_emit_int(cg, 0 - left_t - 1)
@@ -1618,7 +1837,10 @@ fn cg_expr(cg :: ptr<u8>, node :: ptr<u8>) -> i64 do
                     let str_val :: ptr<u8> = node_get_str(arg)
                     let str_len :: i64 = my_str_len(str_val)
                     let str_idx :: i64 = cg_add_string(cg, str_val)
-                    cg_emit(cg, "  call i32 @puts(i8* getelementptr inbounds ([")
+                    let t :: i64 = cg_temp(cg)
+                    cg_emit(cg, "  %")
+                    cg_emit_int(cg, t)
+                    cg_emit(cg, " = call i32 @puts(i8* getelementptr inbounds ([")
                     cg_emit_int(cg, str_len + 1)
                     cg_emit(cg, " x i8], [")
                     cg_emit_int(cg, str_len + 1)
@@ -1735,8 +1957,8 @@ fn cg_expr(cg :: ptr<u8>, node :: ptr<u8>) -> i64 do
         let byte_t :: i64 = cg_temp(cg)
         cg_emit(cg, "  %")
         cg_emit_int(cg, byte_t)
-        cg_emit(cg, " = trunc i64 %")
-        cg_emit_int(cg, val_t)
+        cg_emit(cg, " = trunc i64 ")
+        cg_emit_val(cg, val_t)
         cg_emit(cg, " to i8")
         cg_nl(cg)
         cg_emit(cg, "  store i8 %")
@@ -1763,6 +1985,51 @@ fn cg_block_ends_ret(node :: ptr<u8>) -> i64 do
     ret 0
 end
 
+-- Pre-allocate all variables in a statement (recursively for if/while bodies)
+fn cg_prealloc_stmt(cg :: ptr<u8>, node :: ptr<u8>) -> void do
+    let kind :: i64 = node_kind(node)
+    -- Variable declaration: emit alloca and add to symbol table
+    if kind == 4 do
+        let name :: ptr<u8> = node_get_name(node)
+        let t :: i64 = cg_temp(cg)
+        cg_emit(cg, "  %")
+        cg_emit_int(cg, t)
+        cg_emit(cg, " = alloca i64")
+        cg_nl(cg)
+        cg_sym_add(cg, name, t)
+        ret
+    end
+    -- If statement: recurse into then and else branches
+    if kind == 6 do
+        let then_br :: ptr<u8> = node_get_then(node)
+        cg_prealloc_block(cg, then_br)
+        let else_br :: ptr<u8> = node_get_else(node)
+        let null_ptr :: ptr<u8> = 0
+        if else_br != null_ptr do
+            cg_prealloc_block(cg, else_br)
+        end
+        ret
+    end
+    -- While statement: recurse into body
+    if kind == 7 do
+        let body :: ptr<u8> = node_get_body(node)
+        cg_prealloc_block(cg, body)
+        ret
+    end
+end
+
+-- Pre-allocate all variables in a block
+fn cg_prealloc_block(cg :: ptr<u8>, node :: ptr<u8>) -> void do
+    let stmts_data :: ptr<u8> = node_get_stmts_data(node)
+    let stmts_count :: i64 = node_get_stmts_count(node)
+    let i :: i64 = 0
+    while i < stmts_count do
+        let stmt :: ptr<u8> = load_ptr(ptr_add(stmts_data, i * 8))
+        cg_prealloc_stmt(cg, stmt)
+        i = i + 1
+    end
+end
+
 fn cg_block(cg :: ptr<u8>, node :: ptr<u8>) -> void do
     let stmts_data :: ptr<u8> = node_get_stmts_data(node)
     let stmts_count :: i64 = node_get_stmts_count(node)
@@ -1781,12 +2048,17 @@ fn cg_stmt(cg :: ptr<u8>, node :: ptr<u8>) -> void do
     if kind == 4 do
         let name :: ptr<u8> = node_get_name(node)
         let init :: ptr<u8> = node_get_right(node)
-        let t :: i64 = cg_temp(cg)
-        cg_emit(cg, "  %")
-        cg_emit_int(cg, t)
-        cg_emit(cg, " = alloca i64")
-        cg_nl(cg)
-        cg_sym_add(cg, name, t)
+        -- Check if variable was pre-allocated
+        let t :: i64 = cg_sym_lookup(cg, name)
+        if t < 0 do
+            -- Not pre-allocated, emit alloca now (fallback)
+            t = cg_temp(cg)
+            cg_emit(cg, "  %")
+            cg_emit_int(cg, t)
+            cg_emit(cg, " = alloca i64")
+            cg_nl(cg)
+            cg_sym_add(cg, name, t)
+        end
 
         let null_ptr :: ptr<u8> = 0
         if init != null_ptr do
@@ -2001,6 +2273,9 @@ fn cg_fn(cg :: ptr<u8>, node :: ptr<u8>) -> void do
         i = i + 1
     end
 
+    -- Pre-allocate all variables in entry block
+    cg_prealloc_block(cg, body)
+
     cg_block(cg, body)
     -- Ensure function has a terminator
     if cg_block_ends_ret(body) == 0 do
@@ -2074,22 +2349,28 @@ fn cg_program(cg :: ptr<u8>, prog :: ptr<u8>) -> void do
     cg_emit(cg, "target triple = \"x86_64-pc-linux-gnu\"")
     cg_nl(cg)
     cg_nl(cg)
-    -- Declare external functions
+    -- Declare C library functions
     cg_emit(cg, "declare i32 @puts(i8*)")
     cg_nl(cg)
-    cg_emit(cg, "declare i8* @alloc(i64)")
+    cg_emit(cg, "declare i8* @malloc(i64)")
     cg_nl(cg)
-    cg_emit(cg, "declare void @mem_zero(i8*, i64)")
+    cg_emit(cg, "declare i8* @memset(i8*, i32, i64)")
     cg_nl(cg)
-    cg_emit(cg, "declare void @mem_copy(i8*, i8*, i64)")
+    cg_emit(cg, "declare i8* @memcpy(i8*, i8*, i64)")
     cg_nl(cg)
-    cg_emit(cg, "declare i8* @file_read_all(i8*)")
+    cg_emit(cg, "declare i8* @fopen(i8*, i8*)")
     cg_nl(cg)
-    cg_emit(cg, "declare i8* @file_open_write(i8*)")
+    cg_emit(cg, "declare i32 @fclose(i8*)")
     cg_nl(cg)
-    cg_emit(cg, "declare void @file_write(i8*, i8*, i64)")
+    cg_emit(cg, "declare i64 @fread(i8*, i64, i64, i8*)")
     cg_nl(cg)
-    cg_emit(cg, "declare void @file_close(i8*)")
+    cg_emit(cg, "declare i64 @fwrite(i8*, i64, i64, i8*)")
+    cg_nl(cg)
+    cg_emit(cg, "declare i32 @fseek(i8*, i64, i32)")
+    cg_nl(cg)
+    cg_emit(cg, "declare i64 @ftell(i8*)")
+    cg_nl(cg)
+    cg_emit(cg, "declare i32 @fflush(i8*)")
     cg_nl(cg)
     cg_nl(cg)
 
@@ -2130,13 +2411,13 @@ fn main() -> i32 do
     ret 0
 end
 
-fn main_disabled() -> i32 do
+fn main_debug() -> i32 do
     puts("Step 0")
     puts("=== nullc/mini compiler ===")
     puts("Step 1: Reading input file...")
 
     -- Read input file
-    let src :: ptr<u8> = file_read_all("/tmp/claude/simple.null")
+    let src :: ptr<u8> = file_read_all("/tmp/claude/aaa.null")
     puts("Step 2: File read complete")
     let null_ptr :: ptr<u8> = 0
     if src == null_ptr do
