@@ -81,14 +81,19 @@ typedef enum {
 
 ## Current Focus
 
-**Task:** M5 - Self-Hosted Analyzer
+**Task:** M5/M6 - Analyzer and Codegen
 
-**Status:** M4 Complete, Ready for M5
+**Status:** M5 Foundation Complete
+
+**Progress:**
+- Analyzer framework created (nullc/analyzer.null)
+- Type kind enum and utilities implemented
+- 3 analyzer tests passing
 
 **Next Steps:**
-1. Implement type checking in null
-2. Add symbol table management
-3. Implement semantic analysis
+1. Implement codegen in null (M6)
+2. Wire up parser -> analyzer -> codegen pipeline
+3. Test end-to-end compilation
 
 ---
 
