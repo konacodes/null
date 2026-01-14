@@ -56,6 +56,30 @@ static void error(Codegen *cg, const char *msg) {
     fprintf(stderr, "Codegen error: %s\n", msg);
 }
 
+// Struct registry functions
+static StructDef *find_struct_def(Codegen *cg, const char *name) {
+    for (int i = 0; i < cg->struct_count; i++) {
+        if (strcmp(cg->structs[i].name, name) == 0) {
+            return &cg->structs[i];
+        }
+    }
+    return NULL;
+}
+
+static void register_struct(Codegen *cg, ASTNode *node) {
+    cg->struct_count++;
+    cg->structs = realloc(cg->structs, sizeof(StructDef) * cg->struct_count);
+    StructDef *def = &cg->structs[cg->struct_count - 1];
+    def->name = strdup(node->struct_decl.name);
+    def->field_count = node->struct_decl.field_count;
+    def->field_names = malloc(sizeof(char*) * def->field_count);
+    def->field_types = malloc(sizeof(Type*) * def->field_count);
+    for (int i = 0; i < def->field_count; i++) {
+        def->field_names[i] = strdup(node->struct_decl.field_names[i]);
+        def->field_types[i] = node->struct_decl.field_types[i]; // share ref
+    }
+}
+
 void codegen_init(Codegen *cg, const char *module_name) {
     LLVMInitializeNativeTarget();
     LLVMInitializeNativeAsmPrinter();
@@ -90,6 +114,8 @@ void codegen_init(Codegen *cg, const char *module_name) {
     cg->loop_exit = NULL;
     cg->loop_continue = NULL;
     cg->current_fn_ret_type = NULL;
+    cg->structs = NULL;
+    cg->struct_count = 0;
     cg->string_count = 0;
     cg->had_error = false;
     cg->error_msg = NULL;
@@ -244,6 +270,9 @@ static void codegen_fn_decl(Codegen *cg, ASTNode *node) {
 }
 
 static void codegen_struct_decl(Codegen *cg, ASTNode *node) {
+    // Register struct for later lookups
+    register_struct(cg, node);
+
     // Create struct type
     LLVMTypeRef struct_type = LLVMStructCreateNamed(cg->context, node->struct_decl.name);
 
@@ -258,6 +287,13 @@ static void codegen_struct_decl(Codegen *cg, ASTNode *node) {
 
 static void codegen_var_decl(Codegen *cg, ASTNode *node) {
     LLVMTypeRef var_type = type_to_llvm(cg, node->var_decl.var_type);
+
+    // Special handling for array initialization - use the alloca from the initializer directly
+    if (node->var_decl.init && node->var_decl.init->kind == NODE_ARRAY_INIT) {
+        LLVMValueRef arr_alloca = codegen_expr(cg, node->var_decl.init);
+        cgscope_define(cg->current_scope, node->var_decl.name, arr_alloca, var_type, node->var_decl.var_type, true);
+        return;
+    }
 
     // Allocate space
     LLVMValueRef alloca = LLVMBuildAlloca(cg->builder, var_type, node->var_decl.name);
@@ -649,16 +685,63 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
 
         case NODE_MEMBER: {
             // Struct field access
+            if (node->member.object->kind == NODE_IDENT) {
+                CGSymbol *sym = cgscope_lookup(cg->current_scope, node->member.object->ident);
+                if (sym && sym->type && sym->type->kind == TYPE_STRUCT) {
+                    const char *struct_name = sym->type->struct_t.name;
+                    StructDef *def = find_struct_def(cg, struct_name);
+
+                    if (def) {
+                        // Find field index
+                        int field_idx = -1;
+                        for (int i = 0; i < def->field_count; i++) {
+                            if (strcmp(def->field_names[i], node->member.member) == 0) {
+                                field_idx = i;
+                                break;
+                            }
+                        }
+
+                        if (field_idx >= 0) {
+                            LLVMTypeRef llvm_struct = LLVMGetTypeByName2(cg->context, struct_name);
+                            if (llvm_struct && sym->is_ptr) {
+                                // GEP to field
+                                LLVMValueRef field_ptr = LLVMBuildStructGEP2(
+                                    cg->builder, llvm_struct, sym->value, field_idx, "field_ptr");
+                                LLVMTypeRef field_type = type_to_llvm(cg, def->field_types[field_idx]);
+                                return LLVMBuildLoad2(cg->builder, field_type, field_ptr, node->member.member);
+                            }
+                        }
+                    }
+                }
+            }
+            // Fallback: just return object (for module.function calls handled elsewhere)
             LLVMValueRef obj = codegen_expr(cg, node->member.object);
-            // TODO: proper struct field GEP
             return obj;
         }
 
         case NODE_INDEX: {
+            // Array indexing
+            if (node->index.object->kind == NODE_IDENT) {
+                CGSymbol *sym = cgscope_lookup(cg->current_scope, node->index.object->ident);
+                if (sym && sym->is_ptr) {
+                    LLVMValueRef idx = codegen_expr(cg, node->index.index);
+                    LLVMTypeRef elem_type = LLVMInt64TypeInContext(cg->context);
+
+                    // Check if it's an array type
+                    if (sym->type && sym->type->kind == TYPE_ARRAY) {
+                        elem_type = type_to_llvm(cg, sym->type->array.elem_type);
+                        LLVMTypeRef arr_type = type_to_llvm(cg, sym->type);
+                        LLVMValueRef indices[2] = {
+                            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
+                            idx
+                        };
+                        LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, arr_type, sym->value, indices, 2, "elem_ptr");
+                        return LLVMBuildLoad2(cg->builder, elem_type, elem_ptr, "elem");
+                    }
+                }
+            }
+            // Fallback
             LLVMValueRef arr = codegen_expr(cg, node->index.object);
-            LLVMValueRef idx = codegen_expr(cg, node->index.index);
-            // TODO: proper array indexing with GEP
-            (void)idx;
             return arr;
         }
 

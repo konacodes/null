@@ -1,0 +1,46 @@
+-- tests/lang/structs.null
+-- Test struct definitions and field access
+
+struct Point do
+    x :: i64
+    y :: i64
+end
+
+struct Rectangle do
+    width :: i64
+    height :: i64
+end
+
+fn area(r :: Rectangle) -> i64 do
+    ret r.width * r.height
+end
+
+fn main() -> i32 do
+    -- Test struct creation and field access
+    let p = Point { x = 10, y = 20 }
+
+    if p.x != 10 do
+        ret 1
+    end
+
+    if p.y != 20 do
+        ret 2
+    end
+
+    -- Test struct with function
+    let rect = Rectangle { width = 5, height = 4 }
+    let a :: i64 = area(rect)
+
+    if a != 20 do
+        ret 3
+    end
+
+    -- Test arithmetic with fields
+    let sum :: i64 = p.x + p.y
+    if sum != 30 do
+        ret 4
+    end
+
+    io_print("structs: PASS")
+    ret 0
+end

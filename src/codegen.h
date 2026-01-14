@@ -26,6 +26,14 @@ typedef struct CGScope {
     struct CGScope *parent;
 } CGScope;
 
+// Struct definition registry
+typedef struct {
+    char *name;
+    int field_count;
+    char **field_names;
+    Type **field_types;
+} StructDef;
+
 // Codegen context
 typedef struct {
     LLVMContextRef context;
@@ -42,6 +50,10 @@ typedef struct {
 
     // Current function context
     LLVMTypeRef current_fn_ret_type;
+
+    // Struct registry
+    StructDef *structs;
+    int struct_count;
 
     // String constants cache
     int string_count;

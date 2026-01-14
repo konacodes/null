@@ -1,0 +1,69 @@
+-- examples/vector_math.null
+-- Simple vector operations demonstrating structs
+
+@use "std/io"
+
+struct Vec2 do
+    x :: i64
+    y :: i64
+end
+
+struct Vec3 do
+    x :: i64
+    y :: i64
+    z :: i64
+end
+
+fn vec2_dot(a :: Vec2, b :: Vec2) -> i64 do
+    ret a.x * b.x + a.y * b.y
+end
+
+fn vec2_length_sq(v :: Vec2) -> i64 do
+    ret vec2_dot(v, v)
+end
+
+fn vec3_dot(a :: Vec3, b :: Vec3) -> i64 do
+    ret a.x * b.x + a.y * b.y + a.z * b.z
+end
+
+fn main() -> i32 do
+    -- Test Vec2 operations
+    let v1 = Vec2 { x = 3, y = 4 }
+    let v2 = Vec2 { x = 1, y = 2 }
+
+    -- Dot product
+    let dot :: i64 = vec2_dot(v1, v2)
+    -- 3*1 + 4*2 = 3 + 8 = 11
+    if dot != 11 do
+        ret 1
+    end
+
+    -- Length squared (3^2 + 4^2 = 9 + 16 = 25)
+    let len_sq :: i64 = vec2_length_sq(v1)
+    if len_sq != 25 do
+        ret 2
+    end
+
+    -- Manual addition (since struct returns are complex)
+    let sum_x :: i64 = v1.x + v2.x
+    let sum_y :: i64 = v1.y + v2.y
+    if sum_x != 4 do
+        ret 3
+    end
+    if sum_y != 6 do
+        ret 4
+    end
+
+    -- Test Vec3
+    let v3a = Vec3 { x = 1, y = 2, z = 3 }
+    let v3b = Vec3 { x = 4, y = 5, z = 6 }
+
+    -- 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
+    let v3dot :: i64 = vec3_dot(v3a, v3b)
+    if v3dot != 32 do
+        ret 5
+    end
+
+    io_print("All vector math tests passed!")
+    ret 0
+end

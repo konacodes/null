@@ -1,0 +1,59 @@
+-- examples/fibonacci.null
+-- Calculate and display Fibonacci numbers
+
+@use "std/io"
+
+-- Recursive Fibonacci (slow but clear)
+fn fib_recursive(n :: i64) -> i64 do
+    if n <= 1 do
+        ret n
+    end
+    ret fib_recursive(n - 1) + fib_recursive(n - 2)
+end
+
+-- Iterative Fibonacci (fast)
+fn fib_iterative(n :: i64) -> i64 do
+    if n <= 1 do
+        ret n
+    end
+
+    mut a :: i64 = 0
+    mut b :: i64 = 1
+    mut i :: i64 = 2
+
+    while i <= n do
+        let temp :: i64 = a + b
+        a = b
+        b = temp
+        i = i + 1
+    end
+
+    ret b
+end
+
+fn main() -> i32 do
+    io_print("Fibonacci sequence (iterative):")
+
+    -- Calculate first 10 Fibonacci numbers
+    for i in 0..10 do
+        let f :: i64 = fib_iterative(i)
+        -- Note: we don't have integer printing yet, so just verify correctness
+    end
+
+    -- Verify some known values
+    if fib_iterative(0) != 0 do
+        ret 1
+    end
+    if fib_iterative(1) != 1 do
+        ret 2
+    end
+    if fib_iterative(10) != 55 do
+        ret 3
+    end
+    if fib_iterative(20) != 6765 do
+        ret 4
+    end
+
+    io_print("All Fibonacci tests passed!")
+    ret 0
+end

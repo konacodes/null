@@ -1,0 +1,23 @@
+-- tests/lang/arrays.null
+-- Test array creation and indexing
+
+fn main() -> i32 do
+    -- Test array initialization
+    let arr :: [i64; 5] = [1, 2, 3, 4, 5]
+
+    -- Test array indexing
+    if arr[0] != 1 do
+        ret 1
+    end
+
+    if arr[2] != 3 do
+        ret 2
+    end
+
+    if arr[4] != 5 do
+        ret 3
+    end
+
+    io_print("arrays: PASS")
+    ret 0
+end
