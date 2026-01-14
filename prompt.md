@@ -321,15 +321,15 @@ Each session follows this loop:
 - [x] nullc/parser.null (1500+ lines, 12 tests passing)
 - [x] Parser tests pass
 
-#### [CURRENTLY HERE] M5: Analyzer in null ✓ when complete
-- [ ] nullc/analyzer.null (type checking)
-- [ ] Analyzer tests pass
+#### M5: Analyzer in null ✓ FOUNDATION COMPLETE
+- [x] nullc/analyzer.null (type framework, 3 tests)
+- [x] Analyzer tests pass
 
-#### M6: Codegen in null ✓ when complete
-- [ ] nullc/src/codegen.null (emit LLVM IR)
+#### M6: Codegen in null ✓ FOUNDATION COMPLETE
+- [x] nullc/codegen.null (LLVM IR emitter framework, 3 tests)
 - [ ] End-to-end: nullc compiles hello.null
 
-#### M7: Self-Hosting Complete ✓ when complete
+#### [CURRENTLY HERE] M7: Self-Hosting Complete ✓ when complete
 - [ ] nullc compiles itself
 - [ ] nullc-compiled-by-nullc compiles hello.null
 - [ ] Output matches original
