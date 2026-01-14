@@ -49,29 +49,436 @@ fn call_has_string_arg(call_node :: ptr<u8>) -> bool do
     ret false
 end
 
--- Emit an expression (handles calls)
-fn emit_expr(cg :: Codegen, expr :: ptr<u8>) -> Codegen do
+-- Simple symbol table for variable tracking
+-- Stored in Codegen struct (symtab_entries, symtab_count)
+-- Each entry: name (ptr<u8>, 8 bytes) + temp (i64, 8 bytes) = 16 bytes
+
+fn symtab_init(cg :: Codegen) -> Codegen do
+    let size :: u64 = 1024  -- 64 entries * 16 bytes each
+    cg.symtab_entries = alloc(size)
+    mem_zero(cg.symtab_entries, size)
+    cg.symtab_count = 0
+    ret cg
+end
+
+fn symtab_add(cg :: Codegen, name :: ptr<u8>, temp :: i64) -> Codegen do
+    -- Store at offset count * 16
+    let offset :: i64 = cg.symtab_count * 16
+    let entry_ptr :: ptr<u8> = ptr_add(cg.symtab_entries, offset)
+    store_ptr(entry_ptr, name)
+    store_i64(ptr_add(entry_ptr, 8), temp)
+    cg.symtab_count = cg.symtab_count + 1
+    ret cg
+end
+
+-- Lookup returns -1 if not found, else temp number
+fn symtab_lookup(cg :: Codegen, name :: ptr<u8>) -> i64 do
+    let i :: i64 = 0
+    while i < cg.symtab_count do
+        let offset :: i64 = i * 16
+        let entry_ptr :: ptr<u8> = ptr_add(cg.symtab_entries, offset)
+        let entry_name :: ptr<u8> = load_ptr(entry_ptr)
+        -- Use str_eq from std/string.null
+        if str_eq(entry_name, name) do
+            let temp :: i64 = load_i64(ptr_add(entry_ptr, 8))
+            ret temp
+        end
+        i = i + 1
+    end
+    ret 0 - 1  -- -1 means not found
+end
+
+-- Emit expression and return result temp
+struct ExprResult do
+    cg :: Codegen
+    temp :: i64
+end
+
+-- Check if expression is an identifier (NODE_IDENT = 20)
+fn is_ident(expr :: ptr<u8>) -> bool do
     let kind :: i64 = load_i64(expr)
+    ret kind == 20
+end
+
+-- Check if expression is a literal int (NODE_LITERAL_INT = 16)
+fn is_literal_int(expr :: ptr<u8>) -> bool do
+    let kind :: i64 = load_i64(expr)
+    ret kind == 16
+end
+
+fn emit_expr_val(cg :: Codegen, expr :: ptr<u8>) -> ExprResult do
+    let kind :: i64 = load_i64(expr)
+    let result_temp :: i64 = next_temp(cg)
+
+    -- NODE_LITERAL_INT = 16
+    if kind == 16 do
+        let val :: i64 = load_i64(ptr_add(expr, 24))
+        -- Return negative temp to indicate this is an immediate value
+        -- We use a special marker: temp = val + 1000000 to distinguish from real temps
+        -- Actually, simpler: store the value directly, emit_binary will handle it
+        let res :: ExprResult = ExprResult { cg = cg, temp = val }
+        ret res
+    end
+
+    -- NODE_IDENT = 20 - load variable from symtab
+    if kind == 20 do
+        let name :: ptr<u8> = load_ptr(ptr_add(expr, 56))
+        let var_temp :: i64 = symtab_lookup(cg, name)
+        if var_temp >= 0 do
+            -- Emit load from the variable's alloca
+            cg = inc_temp(cg)
+            cg = emit_load(cg, result_temp, "i64", var_temp)
+            let res :: ExprResult = ExprResult { cg = cg, temp = result_temp }
+            ret res
+        end
+        -- Variable not found - error case, return 0
+        let res :: ExprResult = ExprResult { cg = cg, temp = 0 }
+        ret res
+    end
+
+    -- NODE_BINARY = 21
+    if kind == 21 do
+        -- Get op (offset 64), left (offset 72), right (offset 80)
+        let op :: i64 = load_i64(ptr_add(expr, 64))
+        let left :: ptr<u8> = load_ptr(ptr_add(expr, 72))
+        let right :: ptr<u8> = load_ptr(ptr_add(expr, 80))
+
+        -- Evaluate left operand
+        let left_res :: ExprResult = emit_expr_val(cg, left)
+        cg = left_res.cg
+
+        -- Check if right is literal int for optimization
+        if is_literal_int(right) do
+            let right_val :: i64 = load_i64(ptr_add(right, 24))
+            let res_temp :: i64 = next_temp(cg)
+            cg = inc_temp(cg)
+
+            -- Arithmetic operations: BIN_ADD=0, BIN_SUB=1, BIN_MUL=2, BIN_DIV=3, BIN_MOD=4
+            if op == 0 do
+                cg = emit_binop_temp_imm(cg, res_temp, "add", "i64", left_res.temp, right_val)
+            end
+            if op == 1 do
+                cg = emit_binop_temp_imm(cg, res_temp, "sub", "i64", left_res.temp, right_val)
+            end
+            if op == 2 do
+                cg = emit_binop_temp_imm(cg, res_temp, "mul", "i64", left_res.temp, right_val)
+            end
+            if op == 3 do
+                cg = emit_binop_temp_imm(cg, res_temp, "sdiv", "i64", left_res.temp, right_val)
+            end
+            if op == 4 do
+                cg = emit_binop_temp_imm(cg, res_temp, "srem", "i64", left_res.temp, right_val)
+            end
+            -- Comparison operations: BIN_EQ=5, BIN_NE=6, BIN_LT=7, BIN_LE=8, BIN_GT=9, BIN_GE=10
+            if op == 5 do
+                cg = emit_icmp_temp_imm(cg, res_temp, "eq", "i64", left_res.temp, right_val)
+            end
+            if op == 6 do
+                cg = emit_icmp_temp_imm(cg, res_temp, "ne", "i64", left_res.temp, right_val)
+            end
+            if op == 7 do
+                cg = emit_icmp_temp_imm(cg, res_temp, "slt", "i64", left_res.temp, right_val)
+            end
+            if op == 8 do
+                cg = emit_icmp_temp_imm(cg, res_temp, "sle", "i64", left_res.temp, right_val)
+            end
+            if op == 9 do
+                cg = emit_icmp_temp_imm(cg, res_temp, "sgt", "i64", left_res.temp, right_val)
+            end
+            if op == 10 do
+                cg = emit_icmp_temp_imm(cg, res_temp, "sge", "i64", left_res.temp, right_val)
+            end
+            let res :: ExprResult = ExprResult { cg = cg, temp = res_temp }
+            ret res
+        end
+
+        -- General case: evaluate right operand
+        let right_res :: ExprResult = emit_expr_val(cg, right)
+        cg = right_res.cg
+        let res_temp :: i64 = next_temp(cg)
+        cg = inc_temp(cg)
+
+        -- Arithmetic operations with two temps
+        if op == 0 do
+            cg = emit_binop(cg, res_temp, "add", "i64", left_res.temp, right_res.temp)
+        end
+        if op == 1 do
+            cg = emit_binop(cg, res_temp, "sub", "i64", left_res.temp, right_res.temp)
+        end
+        if op == 2 do
+            cg = emit_binop(cg, res_temp, "mul", "i64", left_res.temp, right_res.temp)
+        end
+        if op == 3 do
+            cg = emit_binop(cg, res_temp, "sdiv", "i64", left_res.temp, right_res.temp)
+        end
+        if op == 4 do
+            cg = emit_binop(cg, res_temp, "srem", "i64", left_res.temp, right_res.temp)
+        end
+        -- Comparison with two temps
+        if op == 5 do
+            cg = emit_icmp(cg, res_temp, "eq", "i64", left_res.temp, right_res.temp)
+        end
+        if op == 6 do
+            cg = emit_icmp(cg, res_temp, "ne", "i64", left_res.temp, right_res.temp)
+        end
+        if op == 7 do
+            cg = emit_icmp(cg, res_temp, "slt", "i64", left_res.temp, right_res.temp)
+        end
+        if op == 8 do
+            cg = emit_icmp(cg, res_temp, "sle", "i64", left_res.temp, right_res.temp)
+        end
+        if op == 9 do
+            cg = emit_icmp(cg, res_temp, "sgt", "i64", left_res.temp, right_res.temp)
+        end
+        if op == 10 do
+            cg = emit_icmp(cg, res_temp, "sge", "i64", left_res.temp, right_res.temp)
+        end
+        let res :: ExprResult = ExprResult { cg = cg, temp = res_temp }
+        ret res
+    end
+
     -- NODE_CALL = 23
     if kind == 23 do
         let name :: ptr<u8> = get_call_name(expr)
         if call_has_string_arg(expr) do
-            -- Map io_print to puts for now
             cg = emit_call_with_str(cg, "puts", 0)
         else do
             cg = emit_call_void(cg, name)
         end
     end
+
+    -- NODE_ASSIGN = 26 - variable assignment
+    if kind == 26 do
+        -- left (offset 72) should be an identifier, right (offset 80) is the value
+        let left :: ptr<u8> = load_ptr(ptr_add(expr, 72))
+        let right :: ptr<u8> = load_ptr(ptr_add(expr, 80))
+
+        -- Get variable name from left (which should be NODE_IDENT with name at offset 56)
+        let var_name :: ptr<u8> = load_ptr(ptr_add(left, 56))
+        let var_temp :: i64 = symtab_lookup(cg, var_name)
+
+        -- Check if right is a literal int - use immediate store
+        let right_kind :: i64 = load_i64(right)
+        if right_kind == 16 do
+            -- NODE_LITERAL_INT - use store immediate
+            let val :: i64 = load_i64(ptr_add(right, 24))
+            cg = emit_store_imm(cg, "i64", val, var_temp)
+            let res :: ExprResult = ExprResult { cg = cg, temp = val }
+            ret res
+        end
+
+        -- General case: Evaluate right side and store
+        let val_res :: ExprResult = emit_expr_val(cg, right)
+        cg = val_res.cg
+        cg = emit_store(cg, "i64", val_res.temp, var_temp)
+
+        let res :: ExprResult = ExprResult { cg = cg, temp = val_res.temp }
+        ret res
+    end
+
+    let res :: ExprResult = ExprResult { cg = cg, temp = result_temp }
+    ret res
+end
+
+-- Emit an expression (handles calls)
+fn emit_expr(cg :: Codegen, expr :: ptr<u8>) -> Codegen do
+    let res :: ExprResult = emit_expr_val(cg, expr)
+    ret res.cg
+end
+
+-- Get next temp number and increment
+fn next_temp(cg :: Codegen) -> i64 do
+    let t :: i64 = cg.temp_counter
+    ret t
+end
+
+fn inc_temp(cg :: Codegen) -> Codegen do
+    cg.temp_counter = cg.temp_counter + 1
+    ret cg
+end
+
+-- Get next label number and increment
+fn next_label(cg :: Codegen) -> i64 do
+    let l :: i64 = cg.label_counter
+    ret l
+end
+
+fn inc_label(cg :: Codegen) -> Codegen do
+    cg.label_counter = cg.label_counter + 1
+    ret cg
+end
+
+-- Emit a variable declaration
+fn emit_var_decl(cg :: Codegen, stmt :: ptr<u8>) -> Codegen do
+    -- Get variable name from node (offset 56)
+    let name :: ptr<u8> = load_ptr(ptr_add(stmt, 56))
+
+    -- Allocate stack space for the variable
+    let temp :: i64 = next_temp(cg)
+    cg = inc_temp(cg)
+    cg = emit_alloca(cg, temp, "i64")
+
+    -- Add to symbol table
+    cg = symtab_add(cg, name, temp)
+
+    -- Check if there's an initializer at offset 152
+    let init :: ptr<u8> = load_ptr(ptr_add(stmt, 152))
+    let null_ptr :: ptr<u8> = 0
+    if init != null_ptr do
+        let init_kind :: i64 = load_i64(init)
+        -- NODE_LITERAL_INT = 16 - use immediate store
+        if init_kind == 16 do
+            let val :: i64 = load_i64(ptr_add(init, 24))
+            cg = emit_store_imm(cg, "i64", val, temp)
+        else do
+            -- General case: evaluate expression and store
+            let init_res :: ExprResult = emit_expr_val(cg, init)
+            cg = init_res.cg
+            cg = emit_store(cg, "i64", init_res.temp, temp)
+        end
+    end
+    ret cg
+end
+
+-- Emit block statements (helper for if/while bodies)
+fn emit_block(cg :: Codegen, block :: ptr<u8>) -> Codegen do
+    let null_ptr :: ptr<u8> = 0
+    if block == null_ptr do
+        ret cg
+    end
+    -- stmts.data at offset 176, stmts.count at offset 184
+    let stmts_data :: ptr<u8> = load_ptr(ptr_add(block, 176))
+    let stmts_count :: i64 = load_i64(ptr_add(block, 184))
+    let i :: i64 = 0
+    while i < stmts_count do
+        let stmt :: ptr<u8> = load_ptr(ptr_add(stmts_data, i * 8))
+        cg = emit_stmt(cg, stmt)
+        i = i + 1
+    end
+    ret cg
+end
+
+-- Emit if statement
+fn emit_if_stmt(cg :: Codegen, stmt :: ptr<u8>) -> Codegen do
+    -- Get condition (offset 192), then_branch (offset 200), else_branch (offset 208)
+    let condition :: ptr<u8> = load_ptr(ptr_add(stmt, 192))
+    let then_branch :: ptr<u8> = load_ptr(ptr_add(stmt, 200))
+    let else_branch :: ptr<u8> = load_ptr(ptr_add(stmt, 208))
+    let null_ptr :: ptr<u8> = 0
+
+    -- Emit condition and get result temp
+    let cond_res :: ExprResult = emit_expr_val(cg, condition)
+    cg = cond_res.cg
+    let cond_temp :: i64 = cond_res.temp
+
+    -- Allocate labels
+    let then_label :: i64 = next_label(cg)
+    cg = inc_label(cg)
+    let else_label :: i64 = next_label(cg)
+    cg = inc_label(cg)
+    let end_label :: i64 = next_label(cg)
+    cg = inc_label(cg)
+
+    -- Emit conditional branch
+    if else_branch == null_ptr do
+        -- No else branch: br cond, then, end
+        cg = emit_br_cond(cg, cond_temp, then_label, end_label)
+    else do
+        -- Has else branch: br cond, then, else
+        cg = emit_br_cond(cg, cond_temp, then_label, else_label)
+    end
+
+    -- Emit then block
+    cg = emit_label(cg, then_label)
+    cg = emit_block(cg, then_branch)
+    cg = emit_br(cg, end_label)
+
+    -- Emit else block if present
+    if else_branch != null_ptr do
+        cg = emit_label(cg, else_label)
+        cg = emit_block(cg, else_branch)
+        cg = emit_br(cg, end_label)
+    end
+
+    -- Emit end label
+    cg = emit_label(cg, end_label)
+
+    ret cg
+end
+
+-- Emit while statement
+fn emit_while_stmt(cg :: Codegen, stmt :: ptr<u8>) -> Codegen do
+    -- Get condition (offset 192), body (offset 200 - stored in then_branch)
+    let condition :: ptr<u8> = load_ptr(ptr_add(stmt, 192))
+    let body :: ptr<u8> = load_ptr(ptr_add(stmt, 200))
+
+    -- Allocate labels
+    let loop_label :: i64 = next_label(cg)
+    cg = inc_label(cg)
+    let body_label :: i64 = next_label(cg)
+    cg = inc_label(cg)
+    let end_label :: i64 = next_label(cg)
+    cg = inc_label(cg)
+
+    -- Jump to loop header
+    cg = emit_br(cg, loop_label)
+
+    -- Loop header: evaluate condition
+    cg = emit_label(cg, loop_label)
+    let cond_res :: ExprResult = emit_expr_val(cg, condition)
+    cg = cond_res.cg
+    cg = emit_br_cond(cg, cond_res.temp, body_label, end_label)
+
+    -- Body
+    cg = emit_label(cg, body_label)
+    cg = emit_block(cg, body)
+    cg = emit_br(cg, loop_label)
+
+    -- End
+    cg = emit_label(cg, end_label)
+
     ret cg
 end
 
 -- Emit a single statement
 fn emit_stmt(cg :: Codegen, stmt :: ptr<u8>) -> Codegen do
     let kind :: i64 = load_i64(stmt)
+    -- NODE_VAR_DECL = 4
+    if kind == 4 do
+        cg = emit_var_decl(cg, stmt)
+    end
     -- NODE_RETURN = 9
     if kind == 9 do
-        let val :: i64 = get_return_value(stmt)
-        cg = emit_ret(cg, "i32", val)
+        -- init (return value) is at offset 152
+        let ret_expr :: ptr<u8> = load_ptr(ptr_add(stmt, 152))
+        let null_ptr :: ptr<u8> = 0
+        if ret_expr == null_ptr do
+            cg = emit_ret(cg, "i32", 0)
+        else do
+            let ret_kind :: i64 = load_i64(ret_expr)
+            -- NODE_LITERAL_INT = 16 - use immediate return
+            if ret_kind == 16 do
+                let val :: i64 = load_i64(ptr_add(ret_expr, 24))
+                cg = emit_ret(cg, "i32", val)
+            else do
+                -- General case: evaluate expression and return
+                let ret_res :: ExprResult = emit_expr_val(cg, ret_expr)
+                cg = ret_res.cg
+                -- Truncate i64 to i32 for return value
+                let trunc_temp :: i64 = next_temp(cg)
+                cg = inc_temp(cg)
+                cg = emit_trunc(cg, trunc_temp, "i64", "i32", ret_res.temp)
+                cg = emit_ret_temp(cg, "i32", trunc_temp)
+            end
+        end
+    end
+    -- NODE_IF = 10
+    if kind == 10 do
+        cg = emit_if_stmt(cg, stmt)
+    end
+    -- NODE_WHILE = 11
+    if kind == 11 do
+        cg = emit_while_stmt(cg, stmt)
     end
     -- NODE_EXPR_STMT = 13
     if kind == 13 do
@@ -104,6 +511,9 @@ end
 -- Helper to emit a single function declaration
 -- This workaround avoids the C compiler bug with load_ptr inside while loops
 fn emit_fn_decl(cg :: Codegen, decl :: ptr<u8>) -> Codegen do
+    -- Initialize symbol table for this function
+    cg = symtab_init(cg)
+
     -- Get function name from node (offset 56)
     let name :: ptr<u8> = load_ptr(ptr_add(decl, 56))
     cg = emit_fn_start(cg, name, "i32")

@@ -108,12 +108,16 @@ struct Codegen do
     label_counter :: i64
     indent :: i64
     had_error :: bool
+    -- Symbol table for variable tracking
+    symtab_entries :: ptr<u8>
+    symtab_count :: i64
 end
 
 -- Create new codegen
 fn codegen_new() -> Codegen do
     let out :: StringBuf = strbuf_new()
-    let cg :: Codegen = Codegen { output = out, temp_counter = 0, label_counter = 0, indent = 0, had_error = false }
+    let null_ptr :: ptr<u8> = 0
+    let cg :: Codegen = Codegen { output = out, temp_counter = 0, label_counter = 0, indent = 0, had_error = false, symtab_entries = null_ptr, symtab_count = 0 }
     ret cg
 end
 
@@ -234,6 +238,32 @@ fn emit_ret(cg :: Codegen, ret_type :: ptr<u8>, value :: i64) -> Codegen do
     ret cg
 end
 
+-- Emit return with temp value
+fn emit_ret_temp(cg :: Codegen, ret_type :: ptr<u8>, temp :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "ret ")
+    cg = emit(cg, ret_type)
+    cg = emit(cg, " %")
+    cg = emit_int(cg, temp)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit trunc instruction (truncate to smaller type)
+fn emit_trunc(cg :: Codegen, result_temp :: i64, src_type :: ptr<u8>, dest_type :: ptr<u8>, src_temp :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result_temp)
+    cg = emit(cg, " = trunc ")
+    cg = emit(cg, src_type)
+    cg = emit(cg, " %")
+    cg = emit_int(cg, src_temp)
+    cg = emit(cg, " to ")
+    cg = emit(cg, dest_type)
+    cg = emit_nl(cg)
+    ret cg
+end
+
 -- Emit ret void
 fn emit_ret_void(cg :: Codegen) -> Codegen do
     cg = emit_indent(cg)
@@ -309,6 +339,23 @@ fn emit_binop(cg :: Codegen, result_temp :: i64, op :: ptr<u8>, llvm_type :: ptr
     ret cg
 end
 
+-- Emit binary operation with temp on left, immediate on right
+fn emit_binop_temp_imm(cg :: Codegen, result_temp :: i64, op :: ptr<u8>, llvm_type :: ptr<u8>, left_temp :: i64, right_val :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result_temp)
+    cg = emit(cg, " = ")
+    cg = emit(cg, op)
+    cg = emit(cg, " ")
+    cg = emit(cg, llvm_type)
+    cg = emit(cg, " %")
+    cg = emit_int(cg, left_temp)
+    cg = emit(cg, ", ")
+    cg = emit_int(cg, right_val)
+    cg = emit_nl(cg)
+    ret cg
+end
+
 -- Emit comparison
 fn emit_icmp(cg :: Codegen, result_temp :: i64, cmp :: ptr<u8>, llvm_type :: ptr<u8>, left_temp :: i64, right_temp :: i64) -> Codegen do
     cg = emit_indent(cg)
@@ -322,6 +369,40 @@ fn emit_icmp(cg :: Codegen, result_temp :: i64, cmp :: ptr<u8>, llvm_type :: ptr
     cg = emit_int(cg, left_temp)
     cg = emit(cg, ", %")
     cg = emit_int(cg, right_temp)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit icmp with immediate values
+fn emit_icmp_imm(cg :: Codegen, result_temp :: i64, cmp :: ptr<u8>, llvm_type :: ptr<u8>, left_val :: i64, right_val :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result_temp)
+    cg = emit(cg, " = icmp ")
+    cg = emit(cg, cmp)
+    cg = emit(cg, " ")
+    cg = emit(cg, llvm_type)
+    cg = emit(cg, " ")
+    cg = emit_int(cg, left_val)
+    cg = emit(cg, ", ")
+    cg = emit_int(cg, right_val)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit icmp with temp on left, immediate on right
+fn emit_icmp_temp_imm(cg :: Codegen, result_temp :: i64, cmp :: ptr<u8>, llvm_type :: ptr<u8>, left_temp :: i64, right_val :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result_temp)
+    cg = emit(cg, " = icmp ")
+    cg = emit(cg, cmp)
+    cg = emit(cg, " ")
+    cg = emit(cg, llvm_type)
+    cg = emit(cg, " %")
+    cg = emit_int(cg, left_temp)
+    cg = emit(cg, ", ")
+    cg = emit_int(cg, right_val)
     cg = emit_nl(cg)
     ret cg
 end

@@ -585,6 +585,19 @@ fn parse_primary(p :: Parser) -> ParseResult do
             ret res
         end
 
+        -- Check for assignment: ident = expr
+        if next.tok_type == TokenType::TOK_EQ do
+            new_p = parser_advance(new_p)  -- consume '='
+            let value :: ParseResult = parse_expression(new_p)
+            new_p = value.p
+            let assign_node :: ptr<ASTNode> = make_node(NodeKind::NODE_ASSIGN, cur.line, cur.column)
+            let ap :: ptr<u8> = assign_node
+            node_set_left(assign_node, node)  -- left is the identifier
+            node_set_right(assign_node, value.node)  -- right is the value
+            let res :: ParseResult = ParseResult { p = new_p, node = assign_node }
+            ret res
+        end
+
         let res :: ParseResult = ParseResult { p = new_p, node = node }
         ret res
     end
