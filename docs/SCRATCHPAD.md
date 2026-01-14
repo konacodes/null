@@ -141,13 +141,19 @@ dynamic_array.null    NOT WRITTEN
 
 ## Session Log
 
-### Session N+1 (2026-01-14)
-- **M4 COMPLETE** - Self-hosted parser fully working
+### Session N+1 (2026-01-14) - Major Progress
+**M4 COMPLETE** - Self-hosted parser fully working
 - Implemented struct/enum declaration parsing
 - Implemented for/break/continue statement parsing
 - Added skip_type() for proper type handling in var decls
-- 12 tests passing
+- 12 parser tests passing
 - Parser can parse complete programs with loops, vars, functions
+
+**M5/M6 Foundations Created**
+- nullc/analyzer.null (3 tests) - type checking infrastructure
+- nullc/codegen.null (3 tests) - LLVM IR text emitter
+
+**Total Tests:** 18 tests passing across lexer, parser, analyzer, codegen
 
 ### Session N (2026-01-13)
 - Created Phase 2 spec (prompt.md)
