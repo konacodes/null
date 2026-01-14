@@ -1333,6 +1333,38 @@ fn parse_enum_decl(p :: Parser) -> ParseResult do
     ret res
 end
 
+-- Skip until we find 'end' token (consumes the end)
+fn skip_until_end(p :: Parser) -> Parser do
+    let cur :: Token = p.current
+    if cur.tok_type == TokenType::TOK_END do
+        p = parser_advance(p)
+        ret p
+    end
+    if cur.tok_type == TokenType::TOK_EOF do
+        ret p
+    end
+    p = parser_advance(p)
+    ret skip_until_end(p)
+end
+
+-- Skip @ directive (just consumes tokens until end of directive)
+fn skip_directive(p :: Parser) -> Parser do
+    p = parser_advance(p)
+    let name :: Token = p.current
+    if name.tok_type == TokenType::TOK_IDENT do
+        p = parser_advance(p)
+        let next :: Token = p.current
+        if next.tok_type == TokenType::TOK_STRING_LIT do
+            p = parser_advance(p)
+            let check :: Token = p.current
+            if check.tok_type == TokenType::TOK_DO do
+                ret skip_until_end(p)
+            end
+        end
+    end
+    ret p
+end
+
 -- Parse top-level declaration
 fn parse_declaration(p :: Parser) -> ParseResult do
     -- Skip any leading newlines
@@ -1359,6 +1391,13 @@ fn parse_declaration(p :: Parser) -> ParseResult do
 
     if cur.tok_type == TokenType::TOK_ENUM do
         ret parse_enum_decl(p)
+    end
+
+    if cur.tok_type == TokenType::TOK_AT do
+        p = skip_directive(p)
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
     end
 
     p = error_at_current(p, "Expected declaration")

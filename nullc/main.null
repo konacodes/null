@@ -155,7 +155,7 @@ fn main() -> i32 do
     print("=== nullc Compiler ===")
     println()
 
-    let source :: ptr<u8> = file_read_all("/tmp/claude/test_call.null")
+    let source :: ptr<u8> = file_read_all("/tmp/claude/test_extern.null")
     let null_ptr :: ptr<u8> = 0
     if source == null_ptr do
         print("Failed to read")
@@ -163,7 +163,7 @@ fn main() -> i32 do
         ret 1
     end
 
-    let f :: ptr<u8> = file_open_read("/tmp/claude/test_call.null")
+    let f :: ptr<u8> = file_open_read("/tmp/claude/test_extern.null")
     let size :: i64 = file_size(f)
     file_close(f)
     print("Read ")
