@@ -1,0 +1,157 @@
+-- libs/format/format.null
+-- Formatting utilities for null
+
+@use "std/io.null"
+
+-- Count digits in a number
+fn count_digits(n :: i64) -> i64 do
+    if n == 0 do
+        ret 1
+    end
+    if n < 0 do
+        n = 0 - n
+    end
+    mut count :: i64 = 0
+    while n > 0 do
+        count = count + 1
+        n = n / 10
+    end
+    ret count
+end
+
+-- Print an integer (handles negative numbers)
+fn fmt_int(n :: i64) -> void do
+    if n < 0 do
+        putchar(45)
+        n = 0 - n
+    end
+
+    if n == 0 do
+        putchar(48)
+        ret
+    end
+
+    mut temp :: i64 = n
+    mut divisor :: i64 = 1
+    while temp >= 10 do
+        temp = temp / 10
+        divisor = divisor * 10
+    end
+
+    while divisor > 0 do
+        let digit :: i64 = n / divisor
+        putchar(48 + digit)
+        n = n - digit * divisor
+        divisor = divisor / 10
+    end
+end
+
+-- Print integer right-aligned with specified width
+fn fmt_int_width(n :: i64, width :: i64) -> void do
+    mut num_width :: i64 = count_digits(n)
+    if n < 0 do
+        num_width = num_width + 1  -- account for minus sign
+    end
+
+    -- Print leading spaces
+    mut i :: i64 = 0
+    while i < width - num_width do
+        putchar(32)
+        i = i + 1
+    end
+
+    fmt_int(n)
+end
+
+-- Print integer left-aligned with specified width
+fn fmt_int_left(n :: i64, width :: i64) -> void do
+    mut num_width :: i64 = count_digits(n)
+    if n < 0 do
+        num_width = num_width + 1
+    end
+
+    fmt_int(n)
+
+    -- Print trailing spaces
+    mut i :: i64 = 0
+    while i < width - num_width do
+        putchar(32)
+        i = i + 1
+    end
+end
+
+-- Print integer zero-padded
+fn fmt_int_zero(n :: i64, width :: i64) -> void do
+    let is_neg :: bool = n < 0
+    if is_neg do
+        putchar(45)
+        n = 0 - n
+        width = width - 1
+    end
+
+    let num_width :: i64 = count_digits(n)
+
+    -- Print leading zeros
+    mut i :: i64 = 0
+    while i < width - num_width do
+        putchar(48)
+        i = i + 1
+    end
+
+    -- Print the number (now positive)
+    if n == 0 do
+        putchar(48)
+        ret
+    end
+
+    mut temp :: i64 = n
+    mut divisor :: i64 = 1
+    while temp >= 10 do
+        temp = temp / 10
+        divisor = divisor * 10
+    end
+
+    while divisor > 0 do
+        let digit :: i64 = n / divisor
+        putchar(48 + digit)
+        n = n - digit * divisor
+        divisor = divisor / 10
+    end
+end
+
+-- Print a percentage (0-100)
+fn fmt_percent(value :: i64) -> void do
+    fmt_int(value)
+    putchar(37)  -- %
+end
+
+-- Print a simple progress bar [=====>     ] style
+fn fmt_progress(current :: i64, total :: i64, width :: i64) -> void do
+    putchar(91)  -- [
+
+    let filled :: i64 = (current * (width - 2)) / total
+    let empty :: i64 = width - 2 - filled
+
+    mut i :: i64 = 0
+    while i < filled do
+        if i == filled - 1 do
+            putchar(62)  -- >
+        else do
+            putchar(61)  -- =
+        end
+        i = i + 1
+    end
+
+    i = 0
+    while i < empty do
+        putchar(32)  -- space
+        i = i + 1
+    end
+
+    putchar(93)  -- ]
+end
+
+-- Print a newline
+fn fmt_newline() -> void do
+    putchar(10)
+end

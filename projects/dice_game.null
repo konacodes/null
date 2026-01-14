@@ -1,0 +1,92 @@
+-- projects/dice_game.null
+-- A colorful dice rolling game
+
+@use "std/io.null"
+@use "libs/random/random.null"
+@use "libs/color/color.null"
+@use "libs/format/format.null"
+@use "libs/string/string.null"
+
+-- Roll multiple dice and show results
+fn roll_multiple(num_dice :: i64, sides :: i64) -> i64 do
+    mut total :: i64 = 0
+    mut i :: i64 = 0
+
+    print_green("Rolling ")
+    fmt_int(num_dice)
+    print_raw("d")
+    fmt_int(sides)
+    print_raw("...")
+    println()
+
+    while i < num_dice do
+        let roll :: i64 = roll_die(sides)
+
+        print_raw("  Die ")
+        fmt_int(i + 1)
+        print_raw(": ")
+
+        -- Color based on roll value
+        if roll == sides do
+            color_bright_green()
+            print_raw("MAX! ")
+        elif roll == 1 do
+            color_red()
+            print_raw("MIN! ")
+        else do
+            color_cyan()
+        end
+
+        fmt_int(roll)
+        color_reset()
+        println()
+
+        total = total + roll
+        i = i + 1
+    end
+
+    ret total
+end
+
+fn main() -> i32 do
+    -- Seed the random number generator
+    rand_seed_time()
+
+    color_bold()
+    color_cyan()
+    print("=== DICE ROLLER ===")
+    color_reset()
+    println()
+
+    -- Roll 3d6 (like D&D stats)
+    let total :: i64 = roll_multiple(3, 6)
+
+    println()
+    print_yellow("Total: ")
+    color_bold()
+    fmt_int(total)
+    color_reset()
+    println()
+
+    -- Also show a d20 roll
+    println()
+    let d20 :: i64 = roll_d20()
+    print_magenta("D20 Roll: ")
+
+    if d20 == 20 do
+        color_bright_green()
+        color_bold()
+        print_raw("NATURAL 20! CRITICAL!")
+    elif d20 == 1 do
+        color_bright_red()
+        color_bold()
+        print_raw("NATURAL 1! CRITICAL FAIL!")
+    else do
+        fmt_int(d20)
+    end
+
+    color_reset()
+    println()
+
+    ret 0
+end

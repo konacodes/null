@@ -1,0 +1,107 @@
+-- projects/progress_demo.null
+-- Demonstration of progress bars and formatting
+
+@use "std/io.null"
+@use "libs/color/color.null"
+@use "libs/format/format.null"
+@use "libs/string/string.null"
+
+fn main() -> i32 do
+    color_bold()
+    color_cyan()
+    print("=== PROGRESS BAR DEMO ===")
+    color_reset()
+    println()
+    println()
+
+    -- Show different progress levels
+    print("Task Progress:")
+    println()
+    print_line(50)
+
+    let percentages :: [i64; 6] = [0, 25, 50, 75, 90, 100]
+    mut i :: i64 = 0
+
+    while i < 6 do
+        let pct :: i64 = percentages[i]
+
+        -- Label
+        print_raw("  ")
+        fmt_int_width(pct, 3)
+        print_raw("% ")
+
+        -- Progress bar with color
+        if pct < 25 do
+            color_red()
+        elif pct < 50 do
+            color_yellow()
+        elif pct < 100 do
+            color_cyan()
+        else do
+            color_bright_green()
+        end
+
+        fmt_progress(pct, 100, 30)
+
+        color_reset()
+
+        -- Status
+        if pct == 100 do
+            print_green(" Complete!")
+        elif pct >= 75 do
+            print_yellow(" Almost there...")
+        elif pct >= 50 do
+            print_raw(" In progress")
+        elif pct > 0 do
+            print_raw(" Starting...")
+        else do
+            print_dim(" Not started")
+        end
+
+        println()
+        i = i + 1
+    end
+
+    print_line(50)
+    println()
+
+    -- Number formatting showcase
+    print("Number Formatting:")
+    println()
+    print_line(50)
+
+    print("  Right-aligned (width 8):")
+    println()
+    let nums :: [i64; 5] = [1, 42, 256, 1024, 99999]
+    i = 0
+    while i < 5 do
+        print_raw("    ")
+        fmt_int_width(nums[i], 8)
+        println()
+        i = i + 1
+    end
+
+    println()
+    print("  Zero-padded (width 5):")
+    println()
+    i = 0
+    while i < 5 do
+        print_raw("    ")
+        color_cyan()
+        fmt_int_zero(nums[i], 5)
+        color_reset()
+        println()
+        i = i + 1
+    end
+
+    print_line(50)
+
+    ret 0
+end
+
+-- Helper for dim text
+fn print_dim(s :: ptr<u8>) -> void do
+    color_dim()
+    print_raw(s)
+    color_reset()
+end

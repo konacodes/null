@@ -1,0 +1,64 @@
+-- libs/random/random.null
+-- Simple random number generation using C stdlib
+
+@extern "C" do
+    fn time(t :: i64) -> i64
+    fn rand() -> i32
+    fn srand(seed :: i32) -> void
+end
+
+-- Initialize random seed from system time
+fn rand_seed_time() -> void do
+    let t :: i64 = time(0)
+    -- Truncate to 32-bit for srand
+    let seed :: i32 = t
+    srand(seed)
+end
+
+-- Set a specific seed
+fn rand_seed(seed :: i32) -> void do
+    srand(seed)
+end
+
+-- Generate random number in range [0, max)
+fn rand_max(max :: i64) -> i64 do
+    if max <= 0 do
+        ret 0
+    end
+    let r :: i64 = rand()
+    ret r - (r / max) * max
+end
+
+-- Generate random number in range [min, max]
+fn rand_range(min_val :: i64, max_val :: i64) -> i64 do
+    if min_val >= max_val do
+        ret min_val
+    end
+    let range :: i64 = max_val - min_val + 1
+    ret min_val + rand_max(range)
+end
+
+-- Generate a random boolean
+fn rand_bool() -> bool do
+    ret rand_max(2) == 1
+end
+
+-- Roll a die with n sides (1 to n)
+fn roll_die(sides :: i64) -> i64 do
+    ret rand_range(1, sides)
+end
+
+-- Roll a d6
+fn roll_d6() -> i64 do
+    ret roll_die(6)
+end
+
+-- Roll a d20
+fn roll_d20() -> i64 do
+    ret roll_die(20)
+end
+
+-- Flip a coin (returns true for heads)
+fn flip_coin() -> bool do
+    ret rand_bool()
+end

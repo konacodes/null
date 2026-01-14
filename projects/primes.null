@@ -1,0 +1,73 @@
+-- projects/primes.null
+-- Find and display prime numbers with formatting
+
+@use "std/io.null"
+@use "libs/color/color.null"
+@use "libs/format/format.null"
+@use "libs/string/string.null"
+
+-- Check if a number is prime
+fn is_prime(n :: i64) -> bool do
+    if n < 2 do
+        ret false
+    end
+    if n == 2 do
+        ret true
+    end
+    if (n - (n / 2) * 2) == 0 do
+        ret false
+    end
+
+    mut i :: i64 = 3
+    while i * i <= n do
+        if (n - (n / i) * i) == 0 do
+            ret false
+        end
+        i = i + 2
+    end
+    ret true
+end
+
+fn main() -> i32 do
+    color_bold()
+    color_yellow()
+    print("=== PRIME NUMBER FINDER ===")
+    color_reset()
+    println()
+    println()
+
+    print("Primes from 1 to 100:")
+    println()
+    print_line(40)
+
+    mut count :: i64 = 0
+    mut n :: i64 = 1
+
+    while n <= 100 do
+        if is_prime(n) do
+            color_bright_cyan()
+            fmt_int_width(n, 4)
+            color_reset()
+            count = count + 1
+
+            -- Print 10 per row
+            if (count - (count / 10) * 10) == 0 do
+                println()
+            end
+        end
+        n = n + 1
+    end
+
+    println()
+    print_line(40)
+    println()
+
+    print_green("Found ")
+    color_bold()
+    fmt_int(count)
+    color_reset()
+    print_green(" prime numbers")
+    println()
+
+    ret 0
+end

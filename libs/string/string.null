@@ -1,0 +1,114 @@
+-- libs/string/string.null
+-- String manipulation utilities for null
+
+@use "std/io.null"
+
+@extern "C" do
+    fn strlen(s :: ptr<u8>) -> i64
+end
+
+-- Get the length of a string
+fn str_len(s :: ptr<u8>) -> i64 do
+    ret strlen(s)
+end
+
+-- Print a character n times
+fn print_char_n(c :: i64, n :: i64) -> void do
+    mut i :: i64 = 0
+    while i < n do
+        putchar(c)
+        i = i + 1
+    end
+end
+
+-- Print spaces
+fn print_spaces(n :: i64) -> void do
+    print_char_n(32, n)
+end
+
+-- Print a horizontal line of dashes
+fn print_line(width :: i64) -> void do
+    print_char_n(45, width)
+    putchar(10)
+end
+
+-- Print a horizontal line of a specific character
+fn print_line_char(c :: i64, width :: i64) -> void do
+    print_char_n(c, width)
+    putchar(10)
+end
+
+-- Print a box line (top or bottom)
+fn print_box_line(width :: i64) -> void do
+    putchar(43)  -- +
+    print_char_n(45, width - 2)  -- -
+    putchar(43)  -- +
+    putchar(10)
+end
+
+-- Print stars
+fn print_stars(n :: i64) -> void do
+    print_char_n(42, n)
+end
+
+-- Check if a character is a digit (0-9)
+fn is_digit(c :: i64) -> bool do
+    if c >= 48 do
+        if c <= 57 do
+            ret true
+        end
+    end
+    ret false
+end
+
+-- Check if a character is uppercase (A-Z)
+fn is_upper(c :: i64) -> bool do
+    if c >= 65 do
+        if c <= 90 do
+            ret true
+        end
+    end
+    ret false
+end
+
+-- Check if a character is lowercase (a-z)
+fn is_lower(c :: i64) -> bool do
+    if c >= 97 do
+        if c <= 122 do
+            ret true
+        end
+    end
+    ret false
+end
+
+-- Check if a character is a letter
+fn is_alpha(c :: i64) -> bool do
+    if is_upper(c) do
+        ret true
+    end
+    ret is_lower(c)
+end
+
+-- Check if a character is alphanumeric
+fn is_alnum(c :: i64) -> bool do
+    if is_alpha(c) do
+        ret true
+    end
+    ret is_digit(c)
+end
+
+-- Convert lowercase to uppercase
+fn to_upper(c :: i64) -> i64 do
+    if is_lower(c) do
+        ret c - 32
+    end
+    ret c
+end
+
+-- Convert uppercase to lowercase
+fn to_lower(c :: i64) -> i64 do
+    if is_upper(c) do
+        ret c + 32
+    end
+    ret c
+end

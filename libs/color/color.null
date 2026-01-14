@@ -1,0 +1,209 @@
+-- libs/color/color.null
+-- ANSI terminal color utilities
+
+@use "std/io.null"
+
+-- Print ESC character (27)
+fn _esc() -> void do
+    putchar(27)
+end
+
+-- Reset all formatting
+fn color_reset() -> void do
+    _esc()
+    print("[0m")
+end
+
+-- Bold text
+fn color_bold() -> void do
+    _esc()
+    print_raw("[1m")
+end
+
+-- Dim text
+fn color_dim() -> void do
+    _esc()
+    print_raw("[2m")
+end
+
+-- Underline text
+fn color_underline() -> void do
+    _esc()
+    print_raw("[4m")
+end
+
+-- Foreground colors
+fn color_black() -> void do
+    _esc()
+    print_raw("[30m")
+end
+
+fn color_red() -> void do
+    _esc()
+    print_raw("[31m")
+end
+
+fn color_green() -> void do
+    _esc()
+    print_raw("[32m")
+end
+
+fn color_yellow() -> void do
+    _esc()
+    print_raw("[33m")
+end
+
+fn color_blue() -> void do
+    _esc()
+    print_raw("[34m")
+end
+
+fn color_magenta() -> void do
+    _esc()
+    print_raw("[35m")
+end
+
+fn color_cyan() -> void do
+    _esc()
+    print_raw("[36m")
+end
+
+fn color_white() -> void do
+    _esc()
+    print_raw("[37m")
+end
+
+-- Bright/bold foreground colors
+fn color_bright_red() -> void do
+    _esc()
+    print_raw("[91m")
+end
+
+fn color_bright_green() -> void do
+    _esc()
+    print_raw("[92m")
+end
+
+fn color_bright_yellow() -> void do
+    _esc()
+    print_raw("[93m")
+end
+
+fn color_bright_blue() -> void do
+    _esc()
+    print_raw("[94m")
+end
+
+fn color_bright_magenta() -> void do
+    _esc()
+    print_raw("[95m")
+end
+
+fn color_bright_cyan() -> void do
+    _esc()
+    print_raw("[96m")
+end
+
+-- Background colors
+fn bg_black() -> void do
+    _esc()
+    print_raw("[40m")
+end
+
+fn bg_red() -> void do
+    _esc()
+    print_raw("[41m")
+end
+
+fn bg_green() -> void do
+    _esc()
+    print_raw("[42m")
+end
+
+fn bg_yellow() -> void do
+    _esc()
+    print_raw("[43m")
+end
+
+fn bg_blue() -> void do
+    _esc()
+    print_raw("[44m")
+end
+
+fn bg_magenta() -> void do
+    _esc()
+    print_raw("[45m")
+end
+
+fn bg_cyan() -> void do
+    _esc()
+    print_raw("[46m")
+end
+
+fn bg_white() -> void do
+    _esc()
+    print_raw("[47m")
+end
+
+-- Helper: print colored text and reset
+fn print_red(s :: ptr<u8>) -> void do
+    color_red()
+    print_raw(s)
+    color_reset()
+end
+
+fn print_green(s :: ptr<u8>) -> void do
+    color_green()
+    print_raw(s)
+    color_reset()
+end
+
+fn print_yellow(s :: ptr<u8>) -> void do
+    color_yellow()
+    print_raw(s)
+    color_reset()
+end
+
+fn print_blue(s :: ptr<u8>) -> void do
+    color_blue()
+    print_raw(s)
+    color_reset()
+end
+
+fn print_cyan(s :: ptr<u8>) -> void do
+    color_cyan()
+    print_raw(s)
+    color_reset()
+end
+
+fn print_magenta(s :: ptr<u8>) -> void do
+    color_magenta()
+    print_raw(s)
+    color_reset()
+end
+
+-- Clear the screen
+fn clear_screen() -> void do
+    _esc()
+    print("[2J")
+    _esc()
+    print_raw("[H")
+end
+
+-- Move cursor to position
+fn cursor_home() -> void do
+    _esc()
+    print_raw("[H")
+end
+
+-- Hide cursor
+fn cursor_hide() -> void do
+    _esc()
+    print_raw("[?25l")
+end
+
+-- Show cursor
+fn cursor_show() -> void do
+    _esc()
+    print_raw("[?25h")
+end

@@ -1,0 +1,86 @@
+-- projects/multiplication_table.null
+-- Colorful multiplication table
+
+@use "std/io.null"
+@use "libs/color/color.null"
+@use "libs/format/format.null"
+@use "libs/string/string.null"
+
+fn main() -> i32 do
+    color_bold()
+    color_magenta()
+    print("=== MULTIPLICATION TABLE ===")
+    color_reset()
+    println()
+    println()
+
+    -- Print header row
+    print_raw("    ")
+    color_bold()
+    color_cyan()
+    mut col :: i64 = 1
+    while col <= 10 do
+        fmt_int_width(col, 4)
+        col = col + 1
+    end
+    color_reset()
+    println()
+
+    -- Print separator
+    print_raw("   ")
+    print_line_char(45, 41)
+
+    -- Print table rows
+    mut row :: i64 = 1
+    while row <= 10 do
+        -- Row header
+        color_bold()
+        color_cyan()
+        fmt_int_width(row, 2)
+        color_reset()
+        print_raw(" |")
+
+        col = 1
+        while col <= 10 do
+            let product :: i64 = row * col
+
+            -- Color based on value
+            if product <= 10 do
+                color_green()
+            elif product <= 25 do
+                color_yellow()
+            elif product <= 50 do
+                color_cyan()
+            else do
+                color_magenta()
+            end
+
+            fmt_int_width(product, 4)
+            color_reset()
+
+            col = col + 1
+        end
+
+        println()
+        row = row + 1
+    end
+
+    println()
+    print("Color Legend:")
+    println()
+    color_green()
+    print_raw("  1-10")
+    color_reset()
+    color_yellow()
+    print_raw("  11-25")
+    color_reset()
+    color_cyan()
+    print_raw("  26-50")
+    color_reset()
+    color_magenta()
+    print_raw("  51+")
+    color_reset()
+    println()
+
+    ret 0
+end
