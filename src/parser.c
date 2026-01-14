@@ -146,6 +146,14 @@ void type_free(Type *t) {
             free(t->struct_t.field_names);
             free(t->struct_t.field_types);
             break;
+        case TYPE_ENUM:
+            free(t->enum_t.name);
+            for (int i = 0; i < t->enum_t.variant_count; i++) {
+                free(t->enum_t.variant_names[i]);
+            }
+            free(t->enum_t.variant_names);
+            free(t->enum_t.variant_values);
+            break;
         case TYPE_FN:
             type_free(t->fn.ret_type);
             for (int i = 0; i < t->fn.param_count; i++) {
@@ -195,6 +203,8 @@ char *type_to_string(Type *t) {
         }
         case TYPE_STRUCT:
             return strdup(t->struct_t.name ? t->struct_t.name : "struct");
+        case TYPE_ENUM:
+            return strdup(t->enum_t.name ? t->enum_t.name : "enum");
         case TYPE_FN:
             return strdup("fn");
         case TYPE_UNKNOWN:
@@ -217,6 +227,9 @@ bool type_equals(Type *a, Type *b) {
         case TYPE_STRUCT:
             return a->struct_t.name && b->struct_t.name &&
                    strcmp(a->struct_t.name, b->struct_t.name) == 0;
+        case TYPE_ENUM:
+            return a->enum_t.name && b->enum_t.name &&
+                   strcmp(a->enum_t.name, b->enum_t.name) == 0;
         default:
             return true;
     }
@@ -258,6 +271,14 @@ void ast_free(ASTNode *node) {
             }
             free(node->struct_decl.field_names);
             free(node->struct_decl.field_types);
+            break;
+        case NODE_ENUM_DECL:
+            free(node->enum_decl.name);
+            for (int i = 0; i < node->enum_decl.variant_count; i++) {
+                free(node->enum_decl.variant_names[i]);
+            }
+            free(node->enum_decl.variant_names);
+            free(node->enum_decl.variant_values);
             break;
         case NODE_VAR_DECL:
             free(node->var_decl.name);
@@ -349,6 +370,10 @@ void ast_free(ASTNode *node) {
             free(node->use.path);
             free(node->use.alias);
             break;
+        case NODE_ENUM_VARIANT:
+            free(node->enum_variant.enum_name);
+            free(node->enum_variant.variant_name);
+            break;
         case NODE_EXTERN:
             free(node->extern_decl.abi);
             for (int i = 0; i < node->extern_decl.fn_count; i++) {
@@ -378,6 +403,7 @@ static void error_at(Parser *p, Token *token, const char *msg);
 static ASTNode *parse_decl(Parser *p);
 static ASTNode *parse_fn_decl(Parser *p);
 static ASTNode *parse_struct_decl(Parser *p);
+static ASTNode *parse_enum_decl(Parser *p);
 static ASTNode *parse_var_decl(Parser *p);
 static ASTNode *parse_use(Parser *p);
 static ASTNode *parse_extern(Parser *p);
@@ -582,6 +608,9 @@ static ASTNode *parse_decl(Parser *p) {
     if (check(p, TOK_STRUCT)) {
         return parse_struct_decl(p);
     }
+    if (check(p, TOK_ENUM)) {
+        return parse_enum_decl(p);
+    }
     if (check(p, TOK_LET) || check(p, TOK_MUT) || check(p, TOK_CONST)) {
         return parse_var_decl(p);
     }
@@ -709,6 +738,48 @@ static ASTNode *parse_struct_decl(Parser *p) {
     }
 
     consume(p, TOK_END, "Expected 'end' after struct body.");
+    return node;
+}
+
+static ASTNode *parse_enum_decl(Parser *p) {
+    consume(p, TOK_ENUM, "Expected 'enum'.");
+    ASTNode *node = ast_new(NODE_ENUM_DECL, p->previous.line, p->previous.column);
+
+    consume(p, TOK_IDENT, "Expected enum name.");
+    node->enum_decl.name = str_dup(p->previous.start, p->previous.length);
+    node->enum_decl.variant_names = NULL;
+    node->enum_decl.variant_values = NULL;
+    node->enum_decl.variant_count = 0;
+
+    consume(p, TOK_DO, "Expected 'do' after enum name.");
+    skip_newlines(p);
+
+    int64_t next_value = 0;  // Auto-increment starting at 0
+
+    while (!check(p, TOK_END) && !check(p, TOK_EOF)) {
+        consume(p, TOK_IDENT, "Expected variant name.");
+        char *variant_name = str_dup(p->previous.start, p->previous.length);
+
+        int64_t value = next_value;
+        // Optional explicit value: Variant = 42
+        if (match(p, TOK_EQ)) {
+            consume(p, TOK_INT_LIT, "Expected integer value for enum variant.");
+            value = p->previous.int_value;
+        }
+        next_value = value + 1;
+
+        node->enum_decl.variant_count++;
+        node->enum_decl.variant_names = safe_realloc(node->enum_decl.variant_names,
+            sizeof(char*) * node->enum_decl.variant_count);
+        node->enum_decl.variant_values = safe_realloc(node->enum_decl.variant_values,
+            sizeof(int64_t) * node->enum_decl.variant_count);
+        node->enum_decl.variant_names[node->enum_decl.variant_count - 1] = variant_name;
+        node->enum_decl.variant_values[node->enum_decl.variant_count - 1] = value;
+
+        skip_newlines(p);
+    }
+
+    consume(p, TOK_END, "Expected 'end' after enum body.");
     return node;
 }
 
@@ -1310,6 +1381,15 @@ static ASTNode *parse_primary(Parser *p) {
 
     if (match(p, TOK_IDENT)) {
         char *name = str_dup(p->previous.start, p->previous.length);
+
+        // Check for enum variant access: EnumName::Variant
+        if (match(p, TOK_COLONCOLON)) {
+            consume(p, TOK_IDENT, "Expected variant name after '::'.");
+            ASTNode *node = ast_new(NODE_ENUM_VARIANT, p->previous.line, p->previous.column);
+            node->enum_variant.enum_name = name;
+            node->enum_variant.variant_name = str_dup(p->previous.start, p->previous.length);
+            return node;
+        }
 
         // Check for struct initializer: Name { ... }
         if (check(p, TOK_LBRACE)) {

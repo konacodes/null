@@ -31,13 +31,14 @@ static void error_at(Analyzer *a, int line, int col, const char *msg) {
 static bool is_numeric_type(TypeKind kind) {
     return kind == TYPE_I8 || kind == TYPE_I16 || kind == TYPE_I32 || kind == TYPE_I64 ||
            kind == TYPE_U8 || kind == TYPE_U16 || kind == TYPE_U32 || kind == TYPE_U64 ||
-           kind == TYPE_F32 || kind == TYPE_F64;
+           kind == TYPE_F32 || kind == TYPE_F64 || kind == TYPE_ENUM;
 }
 
 // Check if a type is an integer type
 static bool is_integer_type(TypeKind kind) {
     return kind == TYPE_I8 || kind == TYPE_I16 || kind == TYPE_I32 || kind == TYPE_I64 ||
-           kind == TYPE_U8 || kind == TYPE_U16 || kind == TYPE_U32 || kind == TYPE_U64;
+           kind == TYPE_U8 || kind == TYPE_U16 || kind == TYPE_U32 || kind == TYPE_U64 ||
+           kind == TYPE_ENUM;
 }
 
 // Check if two types are compatible for a binary operation
@@ -260,6 +261,29 @@ bool analyzer_analyze(Analyzer *a, ASTNode *ast) {
                 }
                 break;
             }
+            case NODE_ENUM_DECL: {
+                Symbol *sym = symbol_new(decl->enum_decl.name, SYM_ENUM, NULL);
+                sym->decl = decl;
+
+                // Build enum type
+                Type *enum_type = type_new(TYPE_ENUM);
+                enum_type->enum_t.name = strdup(decl->enum_decl.name);
+                enum_type->enum_t.variant_count = decl->enum_decl.variant_count;
+                enum_type->enum_t.variant_names = malloc(sizeof(char*) * decl->enum_decl.variant_count);
+                enum_type->enum_t.variant_values = malloc(sizeof(int64_t) * decl->enum_decl.variant_count);
+                for (int j = 0; j < decl->enum_decl.variant_count; j++) {
+                    enum_type->enum_t.variant_names[j] = strdup(decl->enum_decl.variant_names[j]);
+                    enum_type->enum_t.variant_values[j] = decl->enum_decl.variant_values[j];
+                }
+                sym->type = enum_type;
+
+                if (scope_lookup_local(a->global_scope, decl->enum_decl.name)) {
+                    error(a, decl, "Duplicate enum declaration.");
+                } else {
+                    scope_define(a->global_scope, sym);
+                }
+                break;
+            }
             case NODE_EXTERN: {
                 for (int j = 0; j < decl->extern_decl.fn_count; j++) {
                     ASTNode *fn = decl->extern_decl.fn_decls[j];
@@ -306,6 +330,9 @@ static void analyze_node(Analyzer *a, ASTNode *node) {
             break;
         case NODE_STRUCT_DECL:
             analyze_struct_decl(a, node);
+            break;
+        case NODE_ENUM_DECL:
+            // Enum declarations are handled in first pass, nothing to do here
             break;
         case NODE_VAR_DECL:
             analyze_var_decl(a, node);
@@ -547,6 +574,30 @@ static void analyze_expr(Analyzer *a, ASTNode *node) {
                 analyze_expr(a, node->array_init.elements[i]);
             }
             break;
+        case NODE_ENUM_VARIANT: {
+            Symbol *sym = scope_lookup(a->current_scope, node->enum_variant.enum_name);
+            if (!sym || sym->kind != SYM_ENUM) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Unknown enum: %s", node->enum_variant.enum_name);
+                error(a, node, msg);
+            } else {
+                // Check if the variant exists
+                bool found = false;
+                for (int i = 0; i < sym->type->enum_t.variant_count; i++) {
+                    if (strcmp(sym->type->enum_t.variant_names[i], node->enum_variant.variant_name) == 0) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Unknown variant '%s' for enum '%s'",
+                             node->enum_variant.variant_name, node->enum_variant.enum_name);
+                    error(a, node, msg);
+                }
+            }
+            break;
+        }
         default:
             break;
     }
@@ -571,9 +622,16 @@ static Type *infer_type(Analyzer *a, ASTNode *node) {
             }
             return NULL;
         }
-        case NODE_BINARY:
+        case NODE_BINARY: {
+            // Comparison operators return bool
+            BinaryOp op = node->binary.op;
+            if (op == BIN_EQ || op == BIN_NE || op == BIN_LT || op == BIN_LE ||
+                op == BIN_GT || op == BIN_GE || op == BIN_AND || op == BIN_OR) {
+                return type_new(TYPE_BOOL);
+            }
             // For arithmetic, return left operand's type
             return infer_type(a, node->binary.left);
+        }
         case NODE_UNARY:
             return infer_type(a, node->unary.operand);
         case NODE_CALL: {
@@ -588,6 +646,11 @@ static Type *infer_type(Analyzer *a, ASTNode *node) {
         case NODE_STRUCT_INIT: {
             Type *t = type_new(TYPE_STRUCT);
             t->struct_t.name = strdup(node->struct_init.struct_name);
+            return t;
+        }
+        case NODE_ENUM_VARIANT: {
+            Type *t = type_new(TYPE_ENUM);
+            t->enum_t.name = strdup(node->enum_variant.enum_name);
             return t;
         }
         default:

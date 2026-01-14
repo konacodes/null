@@ -1,0 +1,58 @@
+-- std/mem.null
+-- Memory management operations for null
+
+@extern "C" do
+    fn malloc(size :: u64) -> ptr<u8>
+    fn calloc(count :: u64, size :: u64) -> ptr<u8>
+    fn realloc(p :: ptr<u8>, size :: u64) -> ptr<u8>
+    fn free(p :: ptr<u8>) -> void
+    fn memcpy(dest :: ptr<u8>, src :: ptr<u8>, n :: u64) -> ptr<u8>
+    fn memset(s :: ptr<u8>, c :: i32, n :: u64) -> ptr<u8>
+    fn memmove(dest :: ptr<u8>, src :: ptr<u8>, n :: u64) -> ptr<u8>
+end
+
+-- Allocate memory (returns null on failure)
+fn alloc(size :: u64) -> ptr<u8> do
+    ret malloc(size)
+end
+
+-- Allocate and zero memory
+fn alloc_zeroed(size :: u64) -> ptr<u8> do
+    ret calloc(1, size)
+end
+
+-- Allocate array of count elements of given size
+fn alloc_array(count :: u64, elem_size :: u64) -> ptr<u8> do
+    ret calloc(count, elem_size)
+end
+
+-- Reallocate memory to new size
+fn mem_realloc(p :: ptr<u8>, new_size :: u64) -> ptr<u8> do
+    ret realloc(p, new_size)
+end
+
+-- Free allocated memory
+fn dealloc(p :: ptr<u8>) -> void do
+    free(p)
+end
+
+-- Copy memory from src to dest (non-overlapping)
+fn mem_copy(dest :: ptr<u8>, src :: ptr<u8>, n :: u64) -> ptr<u8> do
+    ret memcpy(dest, src, n)
+end
+
+-- Move memory (handles overlapping regions)
+fn mem_move(dest :: ptr<u8>, src :: ptr<u8>, n :: u64) -> ptr<u8> do
+    ret memmove(dest, src, n)
+end
+
+-- Set memory to a value
+fn mem_set(s :: ptr<u8>, c :: i32, n :: u64) -> ptr<u8> do
+    ret memset(s, c, n)
+end
+
+-- Zero memory
+fn mem_zero(s :: ptr<u8>, n :: u64) -> ptr<u8> do
+    let zero :: i32 = 0
+    ret memset(s, zero, n)
+end

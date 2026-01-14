@@ -197,7 +197,12 @@ static TokenType identifier_type(Lexer *lexer) {
                             if (lexer->start[2] == 'i') return check_keyword(lexer, 3, 1, "f", TOK_ELIF);
                         }
                         break;
-                    case 'n': return check_keyword(lexer, 2, 1, "d", TOK_END);
+                    case 'n':
+                        if (lexer->current - lexer->start > 2) {
+                            if (lexer->start[2] == 'd') return check_keyword(lexer, 3, 0, "", TOK_END);
+                            if (lexer->start[2] == 'u') return check_keyword(lexer, 3, 1, "m", TOK_ENUM);
+                        }
+                        break;
                 }
             }
             break;
@@ -423,6 +428,7 @@ const char *token_type_name(TokenType type) {
         case TOK_MUT: return "mut";
         case TOK_CONST: return "const";
         case TOK_STRUCT: return "struct";
+        case TOK_ENUM: return "enum";
         case TOK_IF: return "if";
         case TOK_ELIF: return "elif";
         case TOK_ELSE: return "else";

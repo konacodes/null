@@ -52,6 +52,14 @@ typedef struct {
     ASTNode *node;  // The function AST node
 } InterpFunc;
 
+// Enum definition for interpreter
+typedef struct {
+    char *name;
+    int variant_count;
+    char **variant_names;
+    int64_t *variant_values;
+} InterpEnum;
+
 // Interpreter state
 typedef struct {
     InterpScope *global_scope;
@@ -59,6 +67,9 @@ typedef struct {
     InterpFunc *functions;
     int func_count;
     int func_capacity;
+    InterpEnum *enums;
+    int enum_count;
+    int enum_capacity;
     Value return_value;
     bool has_return;
     bool has_break;     // break statement executed

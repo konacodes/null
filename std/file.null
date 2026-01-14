@@ -1,0 +1,169 @@
+-- std/file.null
+-- File I/O operations for null
+
+@use "std/mem.null"
+
+@extern "C" do
+    fn fopen(path :: ptr<u8>, mode :: ptr<u8>) -> ptr<u8>
+    fn fclose(stream :: ptr<u8>) -> i32
+    fn fread(buf :: ptr<u8>, size :: u64, count :: u64, stream :: ptr<u8>) -> u64
+    fn fwrite(buf :: ptr<u8>, size :: u64, count :: u64, stream :: ptr<u8>) -> u64
+    fn fgets(s :: ptr<u8>, size :: i32, stream :: ptr<u8>) -> ptr<u8>
+    fn fputs(s :: ptr<u8>, stream :: ptr<u8>) -> i32
+    fn fgetc(stream :: ptr<u8>) -> i32
+    fn fputc(c :: i32, stream :: ptr<u8>) -> i32
+    fn fseek(stream :: ptr<u8>, offset :: i64, whence :: i32) -> i32
+    fn ftell(stream :: ptr<u8>) -> i64
+    fn rewind(stream :: ptr<u8>) -> void
+    fn feof(stream :: ptr<u8>) -> i32
+    fn ferror(stream :: ptr<u8>) -> i32
+end
+
+-- Seek constants
+-- SEEK_SET = 0, SEEK_CUR = 1, SEEK_END = 2
+
+-- Open a file for reading
+fn file_open_read(path :: ptr<u8>) -> ptr<u8> do
+    ret fopen(path, "r")
+end
+
+-- Open a file for writing (creates or truncates)
+fn file_open_write(path :: ptr<u8>) -> ptr<u8> do
+    ret fopen(path, "w")
+end
+
+-- Open a file for appending
+fn file_open_append(path :: ptr<u8>) -> ptr<u8> do
+    ret fopen(path, "a")
+end
+
+-- Open a file for reading and writing
+fn file_open_rw(path :: ptr<u8>) -> ptr<u8> do
+    ret fopen(path, "r+")
+end
+
+-- Open a file in binary mode for reading
+fn file_open_read_binary(path :: ptr<u8>) -> ptr<u8> do
+    ret fopen(path, "rb")
+end
+
+-- Open a file in binary mode for writing
+fn file_open_write_binary(path :: ptr<u8>) -> ptr<u8> do
+    ret fopen(path, "wb")
+end
+
+-- Close a file
+fn file_close(f :: ptr<u8>) -> i32 do
+    ret fclose(f)
+end
+
+-- Read bytes from a file
+fn file_read(f :: ptr<u8>, buf :: ptr<u8>, size :: u64) -> u64 do
+    let one :: u64 = 1
+    ret fread(buf, one, size, f)
+end
+
+-- Write bytes to a file
+fn file_write(f :: ptr<u8>, buf :: ptr<u8>, size :: u64) -> u64 do
+    let one :: u64 = 1
+    ret fwrite(buf, one, size, f)
+end
+
+-- Read a line from a file (up to size-1 chars)
+fn file_read_line(f :: ptr<u8>, buf :: ptr<u8>, size :: i32) -> ptr<u8> do
+    ret fgets(buf, size, f)
+end
+
+-- Write a string to a file
+fn file_write_string(f :: ptr<u8>, s :: ptr<u8>) -> i32 do
+    ret fputs(s, f)
+end
+
+-- Read a single character
+fn file_read_char(f :: ptr<u8>) -> i32 do
+    ret fgetc(f)
+end
+
+-- Write a single character
+fn file_write_char(f :: ptr<u8>, c :: i32) -> i32 do
+    ret fputc(c, f)
+end
+
+-- Seek to a position (from beginning)
+fn file_seek_start(f :: ptr<u8>, offset :: i64) -> i32 do
+    let zero :: i32 = 0
+    ret fseek(f, offset, zero)
+end
+
+-- Seek to a position (from current)
+fn file_seek_current(f :: ptr<u8>, offset :: i64) -> i32 do
+    let one :: i32 = 1
+    ret fseek(f, offset, one)
+end
+
+-- Seek to a position (from end)
+fn file_seek_end(f :: ptr<u8>, offset :: i64) -> i32 do
+    let two :: i32 = 2
+    ret fseek(f, offset, two)
+end
+
+-- Get current position
+fn file_tell(f :: ptr<u8>) -> i64 do
+    ret ftell(f)
+end
+
+-- Go back to the beginning
+fn file_rewind(f :: ptr<u8>) -> void do
+    rewind(f)
+end
+
+-- Check if at end of file
+fn file_eof(f :: ptr<u8>) -> bool do
+    let result :: i32 = feof(f)
+    let zero :: i32 = 0
+    ret result != zero
+end
+
+-- Check if there was an error
+fn file_error(f :: ptr<u8>) -> bool do
+    let result :: i32 = ferror(f)
+    let zero :: i32 = 0
+    ret result != zero
+end
+
+-- Get file size (seeks to end and back)
+fn file_size(f :: ptr<u8>) -> i64 do
+    let current :: i64 = ftell(f)
+    let zero :: i64 = 0
+    let two :: i32 = 2
+    fseek(f, zero, two)
+    let size :: i64 = ftell(f)
+    let seek_set :: i32 = 0
+    fseek(f, current, seek_set)
+    ret size
+end
+
+-- Read entire file into allocated buffer (caller must free)
+fn file_read_all(path :: ptr<u8>) -> ptr<u8> do
+    let f :: ptr<u8> = fopen(path, "rb")
+
+    -- Get file size
+    let two :: i32 = 2
+    let zero_i64 :: i64 = 0
+    fseek(f, zero_i64, two)
+    let size :: i64 = ftell(f)
+    let seek_set :: i32 = 0
+    fseek(f, zero_i64, seek_set)
+
+    -- Allocate buffer (+1 for null terminator)
+    let buf_size :: u64 = size + 1
+    let buf :: ptr<u8> = alloc(buf_size)
+
+    -- Read file
+    let one :: u64 = 1
+    let sz :: u64 = size
+    fread(buf, one, sz, f)
+
+    fclose(f)
+    ret buf
+end

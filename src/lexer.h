@@ -17,6 +17,7 @@ typedef enum {
     TOK_MUT,            // mut
     TOK_CONST,          // const
     TOK_STRUCT,         // struct
+    TOK_ENUM,           // enum
     TOK_IF,             // if
     TOK_ELIF,           // elif
     TOK_ELSE,           // else

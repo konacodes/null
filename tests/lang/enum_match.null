@@ -1,0 +1,71 @@
+-- Test enum usage in conditionals
+
+@use "std/io.null"
+
+enum Direction do
+    North
+    East
+    South
+    West
+end
+
+fn direction_name(d :: i64) -> i64 do
+    if d == Direction::North do
+        print("North")
+        ret 0
+    end
+    if d == Direction::East do
+        print("East")
+        ret 1
+    end
+    if d == Direction::South do
+        print("South")
+        ret 2
+    end
+    if d == Direction::West do
+        print("West")
+        ret 3
+    end
+    print("Unknown")
+    ret -1
+end
+
+fn main() -> i32 do
+    let n :: i64 = Direction::North
+    let e :: i64 = Direction::East
+    let s :: i64 = Direction::South
+    let w :: i64 = Direction::West
+
+    print("Direction is: ")
+    let r1 :: i64 = direction_name(n)
+    println()
+
+    print("Direction is: ")
+    let r2 :: i64 = direction_name(e)
+    println()
+
+    print("Direction is: ")
+    let r3 :: i64 = direction_name(s)
+    println()
+
+    print("Direction is: ")
+    let r4 :: i64 = direction_name(w)
+    println()
+
+    -- Verify return values match enum values
+    if r1 == 0 do
+        if r2 == 1 do
+            if r3 == 2 do
+                if r4 == 3 do
+                    print("enum_match: PASS")
+                    println()
+                    ret 0
+                end
+            end
+        end
+    end
+
+    print("enum_match: FAIL")
+    println()
+    ret 1
+end

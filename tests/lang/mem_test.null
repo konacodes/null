@@ -1,0 +1,27 @@
+-- Test memory operations
+
+@use "std/io.null"
+@use "std/mem.null"
+
+fn main() -> i32 do
+    -- Allocate some memory
+    let p :: ptr<u8> = alloc(100)
+
+    -- Zero the memory
+    mem_zero(p, 100)
+
+    -- Free the memory
+    dealloc(p)
+
+    -- Test calloc
+    let p2 :: ptr<u8> = alloc_zeroed(50)
+    dealloc(p2)
+
+    -- Test array allocation
+    let arr :: ptr<u8> = alloc_array(10, 8)
+    dealloc(arr)
+
+    print("mem_test: PASS")
+    println()
+    ret 0
+end

@@ -8,6 +8,7 @@ typedef enum {
     SYM_VAR,
     SYM_FN,
     SYM_STRUCT,
+    SYM_ENUM,
     SYM_PARAM,
 } SymbolKind;
 

@@ -1,0 +1,86 @@
+-- Test struct returns from functions
+
+@use "std/io.null"
+
+struct Point do
+    x :: i64
+    y :: i64
+end
+
+-- Function that returns a struct
+fn make_point(x :: i64, y :: i64) -> Point do
+    ret Point { x = x, y = y }
+end
+
+-- Function that takes a struct and returns a modified version
+fn double_point(p :: Point) -> Point do
+    ret Point { x = p.x * 2, y = p.y * 2 }
+end
+
+-- Function that returns a struct computed from another
+fn add_points(a :: Point, b :: Point) -> Point do
+    ret Point { x = a.x + b.x, y = a.y + b.y }
+end
+
+fn main() -> i32 do
+    -- Test basic struct return
+    let p1 :: Point = make_point(10, 20)
+    print("p1.x = ")
+    print_int(p1.x)
+    println()
+    print("p1.y = ")
+    print_int(p1.y)
+    println()
+
+    -- Test struct return with struct parameter
+    let p2 :: Point = double_point(p1)
+    print("p2.x = ")
+    print_int(p2.x)
+    println()
+    print("p2.y = ")
+    print_int(p2.y)
+    println()
+
+    -- Test struct return with multiple struct parameters
+    let p3 :: Point = add_points(p1, p2)
+    print("p3.x = ")
+    print_int(p3.x)
+    println()
+    print("p3.y = ")
+    print_int(p3.y)
+    println()
+
+    -- Test chained struct returns
+    let p4 :: Point = double_point(make_point(5, 15))
+    print("p4.x = ")
+    print_int(p4.x)
+    println()
+    print("p4.y = ")
+    print_int(p4.y)
+    println()
+
+    -- Verify values
+    if p1.x == 10 do
+        if p1.y == 20 do
+            if p2.x == 20 do
+                if p2.y == 40 do
+                    if p3.x == 30 do
+                        if p3.y == 60 do
+                            if p4.x == 10 do
+                                if p4.y == 30 do
+                                    print("struct_return: PASS")
+                                    println()
+                                    ret 0
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    print("struct_return: FAIL")
+    println()
+    ret 1
+end

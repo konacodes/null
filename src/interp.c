@@ -157,6 +157,33 @@ static void register_func(Interp *interp, const char *name, ASTNode *node) {
     interp->func_count++;
 }
 
+// Find enum
+static InterpEnum *find_enum(Interp *interp, const char *name) {
+    for (int i = 0; i < interp->enum_count; i++) {
+        if (strcmp(interp->enums[i].name, name) == 0) {
+            return &interp->enums[i];
+        }
+    }
+    return NULL;
+}
+
+// Register enum
+static void register_enum(Interp *interp, ASTNode *node) {
+    if (interp->enum_count >= interp->enum_capacity) {
+        interp->enum_capacity = interp->enum_capacity ? interp->enum_capacity * 2 : 16;
+        interp->enums = realloc(interp->enums, sizeof(InterpEnum) * interp->enum_capacity);
+    }
+    InterpEnum *e = &interp->enums[interp->enum_count++];
+    e->name = strdup(node->enum_decl.name);
+    e->variant_count = node->enum_decl.variant_count;
+    e->variant_names = malloc(sizeof(char*) * e->variant_count);
+    e->variant_values = malloc(sizeof(int64_t) * e->variant_count);
+    for (int i = 0; i < e->variant_count; i++) {
+        e->variant_names[i] = strdup(node->enum_decl.variant_names[i]);
+        e->variant_values[i] = node->enum_decl.variant_values[i];
+    }
+}
+
 // Call a function
 static Value call_func(Interp *interp, const char *name, Value *args, int arg_count) {
     // Built-in functions
@@ -429,6 +456,21 @@ static Value eval_expr(Interp *interp, ASTNode *node) {
             return s;
         }
 
+        case NODE_ENUM_VARIANT: {
+            InterpEnum *e = find_enum(interp, node->enum_variant.enum_name);
+            if (!e) {
+                interp_error(interp, "Unknown enum");
+                return val_int(0);
+            }
+            for (int i = 0; i < e->variant_count; i++) {
+                if (strcmp(e->variant_names[i], node->enum_variant.variant_name) == 0) {
+                    return val_int(e->variant_values[i]);
+                }
+            }
+            interp_error(interp, "Unknown enum variant");
+            return val_int(0);
+        }
+
         case NODE_ASSIGN: {
             Value val = eval_expr(interp, node->assign.value);
             if (node->assign.target->kind == NODE_IDENT) {
@@ -604,6 +646,15 @@ void interp_free(Interp *interp) {
         free(interp->functions[i].name);
     }
     free(interp->functions);
+    for (int i = 0; i < interp->enum_count; i++) {
+        free(interp->enums[i].name);
+        for (int j = 0; j < interp->enums[i].variant_count; j++) {
+            free(interp->enums[i].variant_names[j]);
+        }
+        free(interp->enums[i].variant_names);
+        free(interp->enums[i].variant_values);
+    }
+    free(interp->enums);
     if (interp->error_msg) free(interp->error_msg);
 }
 
@@ -614,11 +665,13 @@ int interp_run(Interp *interp, ASTNode *ast) {
         return 1;
     }
 
-    // First pass: register all functions and struct definitions
+    // First pass: register all functions, enums, and struct definitions
     for (int i = 0; i < ast->program.decl_count; i++) {
         ASTNode *decl = ast->program.decls[i];
         if (decl->kind == NODE_FN_DECL && !decl->fn_decl.is_extern) {
             register_func(interp, decl->fn_decl.name, decl);
+        } else if (decl->kind == NODE_ENUM_DECL) {
+            register_enum(interp, decl);
         }
     }
 

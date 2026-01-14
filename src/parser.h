@@ -26,6 +26,7 @@ typedef enum {
     TYPE_ARRAY,
     TYPE_SLICE,
     TYPE_STRUCT,
+    TYPE_ENUM,
     TYPE_FN,
     TYPE_UNKNOWN,
 } TypeKind;
@@ -46,6 +47,12 @@ struct Type {
             char **field_names;
             Type **field_types;
         } struct_t;
+        struct {                // for TYPE_ENUM
+            char *name;
+            int variant_count;
+            char **variant_names;
+            int64_t *variant_values;
+        } enum_t;
         struct {                // for TYPE_FN
             Type *ret_type;
             int param_count;
@@ -62,6 +69,7 @@ typedef enum {
     // Declarations
     NODE_FN_DECL,
     NODE_STRUCT_DECL,
+    NODE_ENUM_DECL,
     NODE_VAR_DECL,
     NODE_PARAM,
 
@@ -89,6 +97,7 @@ typedef enum {
     NODE_IDENT,
     NODE_STRUCT_INIT,
     NODE_ARRAY_INIT,
+    NODE_ENUM_VARIANT,
 
     // Directives
     NODE_USE,
@@ -160,6 +169,14 @@ struct ASTNode {
             Type **field_types;
             int field_count;
         } struct_decl;
+
+        // NODE_ENUM_DECL
+        struct {
+            char *name;
+            char **variant_names;
+            int64_t *variant_values;
+            int variant_count;
+        } enum_decl;
 
         // NODE_VAR_DECL
         struct {
@@ -278,6 +295,12 @@ struct ASTNode {
             ASTNode **elements;
             int elem_count;
         } array_init;
+
+        // NODE_ENUM_VARIANT
+        struct {
+            char *enum_name;
+            char *variant_name;
+        } enum_variant;
 
         // NODE_USE
         struct {

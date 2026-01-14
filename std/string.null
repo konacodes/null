@@ -1,0 +1,150 @@
+-- std/string.null
+-- String operations for null
+
+@use "std/mem.null"
+
+@extern "C" do
+    fn strlen(s :: ptr<u8>) -> u64
+    fn strcmp(s1 :: ptr<u8>, s2 :: ptr<u8>) -> i32
+    fn strncmp(s1 :: ptr<u8>, s2 :: ptr<u8>, n :: u64) -> i32
+    fn strcpy(dest :: ptr<u8>, src :: ptr<u8>) -> ptr<u8>
+    fn strncpy(dest :: ptr<u8>, src :: ptr<u8>, n :: u64) -> ptr<u8>
+    fn strcat(dest :: ptr<u8>, src :: ptr<u8>) -> ptr<u8>
+    fn strchr(s :: ptr<u8>, c :: i32) -> ptr<u8>
+    fn strstr(haystack :: ptr<u8>, needle :: ptr<u8>) -> ptr<u8>
+end
+
+-- Get string length
+fn str_len(s :: ptr<u8>) -> u64 do
+    ret strlen(s)
+end
+
+-- Compare two strings (returns 0 if equal)
+fn str_cmp(s1 :: ptr<u8>, s2 :: ptr<u8>) -> i32 do
+    ret strcmp(s1, s2)
+end
+
+-- Check if two strings are equal
+fn str_eq(s1 :: ptr<u8>, s2 :: ptr<u8>) -> bool do
+    let result :: i32 = strcmp(s1, s2)
+    let zero :: i32 = 0
+    ret result == zero
+end
+
+-- Copy a string to destination
+fn str_copy(dest :: ptr<u8>, src :: ptr<u8>) -> ptr<u8> do
+    ret strcpy(dest, src)
+end
+
+-- Copy at most n characters
+fn str_copy_n(dest :: ptr<u8>, src :: ptr<u8>, n :: u64) -> ptr<u8> do
+    ret strncpy(dest, src, n)
+end
+
+-- Concatenate strings
+fn str_cat(dest :: ptr<u8>, src :: ptr<u8>) -> ptr<u8> do
+    ret strcat(dest, src)
+end
+
+-- Find character in string
+fn str_find_char(s :: ptr<u8>, c :: i32) -> ptr<u8> do
+    ret strchr(s, c)
+end
+
+-- Find substring
+fn str_find(haystack :: ptr<u8>, needle :: ptr<u8>) -> ptr<u8> do
+    ret strstr(haystack, needle)
+end
+
+-- Duplicate a string (allocates new memory)
+fn str_dup(s :: ptr<u8>) -> ptr<u8> do
+    let len :: u64 = strlen(s) + 1
+    let new_s :: ptr<u8> = alloc(len)
+    mem_copy(new_s, s, len)
+    ret new_s
+end
+
+-- Create an empty string with given capacity
+fn str_new(capacity :: u64) -> ptr<u8> do
+    let s :: ptr<u8> = alloc(capacity + 1)
+    let zero :: i32 = 0
+    memset(s, zero, capacity + 1)
+    ret s
+end
+
+-- Check if string starts with prefix
+fn str_starts_with(s :: ptr<u8>, prefix :: ptr<u8>) -> bool do
+    let prefix_len :: u64 = strlen(prefix)
+    let result :: i32 = strncmp(s, prefix, prefix_len)
+    let zero :: i32 = 0
+    ret result == zero
+end
+
+-- Check if string is empty
+fn str_is_empty(s :: ptr<u8>) -> bool do
+    let len :: u64 = strlen(s)
+    let zero :: u64 = 0
+    ret len == zero
+end
+
+-- Check if character is a digit (0-9)
+fn char_is_digit(c :: i64) -> bool do
+    if c >= 48 do
+        if c <= 57 do
+            ret true
+        end
+    end
+    ret false
+end
+
+-- Check if character is a letter (a-z, A-Z)
+fn char_is_alpha(c :: i64) -> bool do
+    if c >= 65 do
+        if c <= 90 do
+            ret true
+        end
+    end
+    if c >= 97 do
+        if c <= 122 do
+            ret true
+        end
+    end
+    ret false
+end
+
+-- Check if character is alphanumeric
+fn char_is_alnum(c :: i64) -> bool do
+    if char_is_alpha(c) do
+        ret true
+    end
+    ret char_is_digit(c)
+end
+
+-- Check if character is whitespace
+fn char_is_space(c :: i64) -> bool do
+    if c == 32 do ret true end
+    if c == 9 do ret true end
+    if c == 10 do ret true end
+    if c == 13 do ret true end
+    ret false
+end
+
+-- Convert character to lowercase
+fn char_to_lower(c :: i64) -> i64 do
+    if c >= 65 do
+        if c <= 90 do
+            ret c + 32
+        end
+    end
+    ret c
+end
+
+-- Convert character to uppercase
+fn char_to_upper(c :: i64) -> i64 do
+    if c >= 97 do
+        if c <= 122 do
+            ret c - 32
+        end
+    end
+    ret c
+end

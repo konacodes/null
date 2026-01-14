@@ -1,0 +1,72 @@
+-- Test basic enum functionality
+
+@use "std/io.null"
+
+enum Color do
+    Red
+    Green
+    Blue
+end
+
+enum Status do
+    Pending = 0
+    Active = 10
+    Done = 20
+end
+
+fn main() -> i32 do
+    -- Test basic enum values (auto-increment from 0)
+    let r :: i64 = Color::Red
+    let g :: i64 = Color::Green
+    let b :: i64 = Color::Blue
+
+    print("Color::Red = ")
+    print_int(r)
+    println()
+
+    print("Color::Green = ")
+    print_int(g)
+    println()
+
+    print("Color::Blue = ")
+    print_int(b)
+    println()
+
+    -- Test explicit enum values
+    let pending :: i64 = Status::Pending
+    let active :: i64 = Status::Active
+    let done :: i64 = Status::Done
+
+    print("Status::Pending = ")
+    print_int(pending)
+    println()
+
+    print("Status::Active = ")
+    print_int(active)
+    println()
+
+    print("Status::Done = ")
+    print_int(done)
+    println()
+
+    -- Verify values
+    if r == 0 do
+        if g == 1 do
+            if b == 2 do
+                if pending == 0 do
+                    if active == 10 do
+                        if done == 20 do
+                            print("enum_basic: PASS")
+                            println()
+                            ret 0
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    print("enum_basic: FAIL")
+    println()
+    ret 1
+end

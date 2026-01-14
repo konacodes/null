@@ -1,0 +1,88 @@
+-- Test string operations
+
+@use "std/io.null"
+@use "std/string.null"
+@use "std/mem.null"
+
+fn main() -> i32 do
+    -- Test strlen
+    let hello :: ptr<u8> = "Hello"
+    let len :: u64 = str_len(hello)
+    print("Length of 'Hello': ")
+    print_u64(len)
+    println()
+
+    -- Test string comparison
+    let world :: ptr<u8> = "World"
+    if str_eq(hello, hello) do
+        print("hello == hello: true")
+        println()
+    else do
+        print("hello == hello: false (FAIL)")
+        println()
+        ret 1
+    end
+
+    if str_eq(hello, world) do
+        print("hello == world: true (FAIL)")
+        println()
+        ret 1
+    else do
+        print("hello == world: false")
+        println()
+    end
+
+    -- Test character functions
+    if char_is_digit(48) do
+        print("'0' is digit: true")
+        println()
+    else do
+        print("'0' is digit: false (FAIL)")
+        println()
+        ret 1
+    end
+
+    if char_is_alpha(65) do
+        print("'A' is alpha: true")
+        println()
+    else do
+        print("'A' is alpha: false (FAIL)")
+        println()
+        ret 1
+    end
+
+    if char_is_space(32) do
+        print("' ' is space: true")
+        println()
+    else do
+        print("' ' is space: false (FAIL)")
+        println()
+        ret 1
+    end
+
+    -- Test case conversion
+    let lower_a :: i64 = char_to_lower(65)
+    if lower_a == 97 do
+        print("to_lower('A') == 'a': true")
+        println()
+    else do
+        print("to_lower('A') == 'a': false (FAIL)")
+        println()
+        ret 1
+    end
+
+    -- Test str_starts_with
+    let prefix :: ptr<u8> = "Hel"
+    if str_starts_with(hello, prefix) do
+        print("'Hello' starts with 'Hel': true")
+        println()
+    else do
+        print("'Hello' starts with 'Hel': false (FAIL)")
+        println()
+        ret 1
+    end
+
+    print("string_test: PASS")
+    println()
+    ret 0
+end

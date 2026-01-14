@@ -1,0 +1,46 @@
+-- std/array.null
+-- Dynamic array (vector) operations for null
+-- Note: Since null doesn't have generics yet, this provides helper functions
+-- for working with ptr<u8> based arrays. The caller manages element size.
+
+@use "std/mem.null"
+
+-- Array structure
+-- We use a simple struct to represent a dynamic array
+struct DynArray do
+    data :: ptr<u8>      -- pointer to array data
+    len :: u64           -- number of elements
+    cap :: u64           -- capacity (allocated size)
+    elem_size :: u64     -- size of each element in bytes
+end
+
+-- Create a new dynamic array with given initial capacity and element size
+fn array_new(initial_cap :: u64, esize :: u64) -> DynArray do
+    let data_ptr :: ptr<u8> = alloc(initial_cap * esize)
+    let zero :: u64 = 0
+    let arr :: DynArray = DynArray { data = data_ptr, len = zero, cap = initial_cap, elem_size = esize }
+    ret arr
+end
+
+-- Free array memory (pass the array by value, get data pointer)
+fn array_free(data :: ptr<u8>) -> void do
+    dealloc(data)
+end
+
+-- Helper functions for common array sizes
+
+-- Create i64 array
+fn array_i64_new(initial_cap :: u64) -> DynArray do
+    ret array_new(initial_cap, 8)
+end
+
+-- Create i32 array
+fn array_i32_new(initial_cap :: u64) -> DynArray do
+    ret array_new(initial_cap, 4)
+end
+
+-- Create u8 array (byte array)
+fn array_u8_new(initial_cap :: u64) -> DynArray do
+    ret array_new(initial_cap, 1)
+end
+

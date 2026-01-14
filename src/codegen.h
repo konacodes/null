@@ -34,6 +34,14 @@ typedef struct {
     Type **field_types;
 } StructDef;
 
+// Enum definition registry
+typedef struct {
+    char *name;
+    int variant_count;
+    char **variant_names;
+    int64_t *variant_values;
+} EnumDef;
+
 // Codegen context
 typedef struct {
     LLVMContextRef context;
@@ -50,10 +58,16 @@ typedef struct {
 
     // Current function context
     LLVMTypeRef current_fn_ret_type;
+    LLVMValueRef current_fn_sret;     // sret pointer for struct returns (NULL if not struct return)
+    Type *current_fn_ret_null_type;   // null language type for return
 
     // Struct registry
     StructDef *structs;
     int struct_count;
+
+    // Enum registry
+    EnumDef *enums;
+    int enum_count;
 
     // String constants cache
     int string_count;

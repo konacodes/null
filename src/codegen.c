@@ -56,6 +56,11 @@ static void error(Codegen *cg, const char *msg) {
     fprintf(stderr, "Codegen error: %s\n", msg);
 }
 
+// Check if a type requires sret (struct return) calling convention
+static bool type_needs_sret(Type *type) {
+    return type && type->kind == TYPE_STRUCT;
+}
+
 // Struct registry functions
 static StructDef *find_struct_def(Codegen *cg, const char *name) {
     for (int i = 0; i < cg->struct_count; i++) {
@@ -82,6 +87,34 @@ static void register_struct(Codegen *cg, ASTNode *node) {
     for (int i = 0; i < def->field_count; i++) {
         def->field_names[i] = strdup(node->struct_decl.field_names[i]);
         def->field_types[i] = node->struct_decl.field_types[i]; // share ref
+    }
+}
+
+static EnumDef *find_enum_def(Codegen *cg, const char *name) {
+    for (int i = 0; i < cg->enum_count; i++) {
+        if (strcmp(cg->enums[i].name, name) == 0) {
+            return &cg->enums[i];
+        }
+    }
+    return NULL;
+}
+
+static void register_enum(Codegen *cg, ASTNode *node) {
+    cg->enum_count++;
+    void *new_ptr = realloc(cg->enums, sizeof(EnumDef) * cg->enum_count);
+    if (!new_ptr) {
+        fprintf(stderr, "Out of memory registering enum\n");
+        exit(1);
+    }
+    cg->enums = new_ptr;
+    EnumDef *def = &cg->enums[cg->enum_count - 1];
+    def->name = strdup(node->enum_decl.name);
+    def->variant_count = node->enum_decl.variant_count;
+    def->variant_names = malloc(sizeof(char*) * def->variant_count);
+    def->variant_values = malloc(sizeof(int64_t) * def->variant_count);
+    for (int i = 0; i < def->variant_count; i++) {
+        def->variant_names[i] = strdup(node->enum_decl.variant_names[i]);
+        def->variant_values[i] = node->enum_decl.variant_values[i];
     }
 }
 
@@ -119,8 +152,12 @@ void codegen_init(Codegen *cg, const char *module_name) {
     cg->loop_exit = NULL;
     cg->loop_continue = NULL;
     cg->current_fn_ret_type = NULL;
+    cg->current_fn_sret = NULL;
+    cg->current_fn_ret_null_type = NULL;
     cg->structs = NULL;
     cg->struct_count = 0;
+    cg->enums = NULL;
+    cg->enum_count = 0;
     cg->string_count = 0;
     cg->had_error = false;
     cg->error_msg = NULL;
@@ -152,6 +189,21 @@ void codegen_free(Codegen *cg) {
         free(cg->structs);
         cg->structs = NULL;
         cg->struct_count = 0;
+    }
+
+    // Free enum registry
+    if (cg->enums) {
+        for (int i = 0; i < cg->enum_count; i++) {
+            free(cg->enums[i].name);
+            for (int j = 0; j < cg->enums[i].variant_count; j++) {
+                free(cg->enums[i].variant_names[j]);
+            }
+            free(cg->enums[i].variant_names);
+            free(cg->enums[i].variant_values);
+        }
+        free(cg->enums);
+        cg->enums = NULL;
+        cg->enum_count = 0;
     }
 }
 
@@ -215,19 +267,42 @@ static LLVMTypeRef type_to_llvm(Codegen *cg, Type *type) {
             free(params);
             return fn_type;
         }
+        case TYPE_ENUM:
+            // Enums are represented as i64
+            return LLVMInt64TypeInContext(cg->context);
         default:
             return LLVMInt64TypeInContext(cg->context);
     }
 }
 
 static void codegen_fn_decl(Codegen *cg, ASTNode *node) {
+    bool uses_sret = type_needs_sret(node->fn_decl.ret_type);
+
     // Build function type
-    LLVMTypeRef ret_type = type_to_llvm(cg, node->fn_decl.ret_type);
-    LLVMTypeRef *param_types = malloc(sizeof(LLVMTypeRef) * node->fn_decl.param_count);
-    for (int i = 0; i < node->fn_decl.param_count; i++) {
-        param_types[i] = type_to_llvm(cg, node->fn_decl.params[i]->param.param_type);
+    // If returning struct, use sret convention: void return, hidden first param is ptr to return value
+    LLVMTypeRef ret_type;
+    int total_params;
+    LLVMTypeRef *param_types;
+
+    if (uses_sret) {
+        ret_type = LLVMVoidTypeInContext(cg->context);
+        total_params = node->fn_decl.param_count + 1;
+        param_types = malloc(sizeof(LLVMTypeRef) * total_params);
+        // First param is sret pointer
+        param_types[0] = LLVMPointerTypeInContext(cg->context, 0);
+        for (int i = 0; i < node->fn_decl.param_count; i++) {
+            param_types[i + 1] = type_to_llvm(cg, node->fn_decl.params[i]->param.param_type);
+        }
+    } else {
+        ret_type = type_to_llvm(cg, node->fn_decl.ret_type);
+        total_params = node->fn_decl.param_count;
+        param_types = malloc(sizeof(LLVMTypeRef) * (total_params > 0 ? total_params : 1));
+        for (int i = 0; i < node->fn_decl.param_count; i++) {
+            param_types[i] = type_to_llvm(cg, node->fn_decl.params[i]->param.param_type);
+        }
     }
-    LLVMTypeRef fn_type = LLVMFunctionType(ret_type, param_types, node->fn_decl.param_count, 0);
+
+    LLVMTypeRef fn_type = LLVMFunctionType(ret_type, param_types, total_params, 0);
 
     // Create function
     LLVMValueRef fn = LLVMGetNamedFunction(cg->module, node->fn_decl.name);
@@ -235,8 +310,16 @@ static void codegen_fn_decl(Codegen *cg, ASTNode *node) {
         fn = LLVMAddFunction(cg->module, node->fn_decl.name, fn_type);
     }
 
-    // Register in scope
-    cgscope_define(cg->global_scope, node->fn_decl.name, fn, fn_type, NULL, false);
+    // Add sret attribute to first parameter if struct return
+    if (uses_sret) {
+        LLVMAddAttributeAtIndex(fn, 1, LLVMCreateEnumAttribute(cg->context,
+            LLVMGetEnumAttributeKindForName("sret", 4), 0));
+        LLVMAddAttributeAtIndex(fn, 1, LLVMCreateEnumAttribute(cg->context,
+            LLVMGetEnumAttributeKindForName("noalias", 7), 0));
+    }
+
+    // Register in scope (store the original return type info for call handling)
+    cgscope_define(cg->global_scope, node->fn_decl.name, fn, fn_type, node->fn_decl.ret_type, false);
 
     if (node->fn_decl.is_extern || !node->fn_decl.body) {
         free(param_types);
@@ -250,18 +333,29 @@ static void codegen_fn_decl(Codegen *cg, ASTNode *node) {
     // Create function scope
     CGScope *fn_scope = cgscope_new(cg->current_scope);
     cg->current_scope = fn_scope;
-    cg->current_fn_ret_type = ret_type;
+    cg->current_fn_ret_type = uses_sret ? type_to_llvm(cg, node->fn_decl.ret_type) : ret_type;
+    cg->current_fn_ret_null_type = node->fn_decl.ret_type;
 
-    // Add parameters to scope
+    // Set up sret pointer if returning struct
+    if (uses_sret) {
+        cg->current_fn_sret = LLVMGetParam(fn, 0);
+        LLVMSetValueName2(cg->current_fn_sret, "sret", 4);
+    } else {
+        cg->current_fn_sret = NULL;
+    }
+
+    // Add parameters to scope (offset by 1 if sret)
+    int param_offset = uses_sret ? 1 : 0;
     for (int i = 0; i < node->fn_decl.param_count; i++) {
-        LLVMValueRef param_val = LLVMGetParam(fn, i);
+        LLVMValueRef param_val = LLVMGetParam(fn, i + param_offset);
         ASTNode *param = node->fn_decl.params[i];
         LLVMSetValueName2(param_val, param->param.name, strlen(param->param.name));
 
         // Allocate space for parameter
-        LLVMValueRef alloca = LLVMBuildAlloca(cg->builder, param_types[i], param->param.name);
+        LLVMTypeRef param_llvm_type = type_to_llvm(cg, param->param.param_type);
+        LLVMValueRef alloca = LLVMBuildAlloca(cg->builder, param_llvm_type, param->param.name);
         LLVMBuildStore(cg->builder, param_val, alloca);
-        cgscope_define(fn_scope, param->param.name, alloca, param_types[i], param->param.param_type, true);
+        cgscope_define(fn_scope, param->param.name, alloca, param_llvm_type, param->param.param_type, true);
     }
 
     // Generate body
@@ -270,7 +364,7 @@ static void codegen_fn_decl(Codegen *cg, ASTNode *node) {
     // Add implicit return if needed
     LLVMBasicBlockRef current_bb = LLVMGetInsertBlock(cg->builder);
     if (!LLVMGetBasicBlockTerminator(current_bb)) {
-        if (node->fn_decl.ret_type->kind == TYPE_VOID) {
+        if (uses_sret || node->fn_decl.ret_type->kind == TYPE_VOID) {
             LLVMBuildRetVoid(cg->builder);
         } else {
             LLVMBuildRet(cg->builder, LLVMConstInt(type_to_llvm(cg, node->fn_decl.ret_type), 0, 0));
@@ -279,6 +373,8 @@ static void codegen_fn_decl(Codegen *cg, ASTNode *node) {
 
     cg->current_scope = fn_scope->parent;
     cg->current_fn_ret_type = NULL;
+    cg->current_fn_sret = NULL;
+    cg->current_fn_ret_null_type = NULL;
     cgscope_free(fn_scope);
     free(param_types);
 
@@ -292,16 +388,27 @@ static void codegen_struct_decl(Codegen *cg, ASTNode *node) {
     // Register struct for later lookups
     register_struct(cg, node);
 
-    // Create struct type
-    LLVMTypeRef struct_type = LLVMStructCreateNamed(cg->context, node->struct_decl.name);
-
-    LLVMTypeRef *field_types = malloc(sizeof(LLVMTypeRef) * node->struct_decl.field_count);
-    for (int i = 0; i < node->struct_decl.field_count; i++) {
-        field_types[i] = type_to_llvm(cg, node->struct_decl.field_types[i]);
+    // Look up existing struct or create new one
+    LLVMTypeRef struct_type = LLVMGetTypeByName2(cg->context, node->struct_decl.name);
+    if (!struct_type) {
+        struct_type = LLVMStructCreateNamed(cg->context, node->struct_decl.name);
     }
 
-    LLVMStructSetBody(struct_type, field_types, node->struct_decl.field_count, 0);
-    free(field_types);
+    // Only set body if not already set (check if struct is opaque)
+    if (LLVMIsOpaqueStruct(struct_type)) {
+        LLVMTypeRef *field_types = malloc(sizeof(LLVMTypeRef) * node->struct_decl.field_count);
+        for (int i = 0; i < node->struct_decl.field_count; i++) {
+            field_types[i] = type_to_llvm(cg, node->struct_decl.field_types[i]);
+        }
+
+        LLVMStructSetBody(struct_type, field_types, node->struct_decl.field_count, 0);
+        free(field_types);
+    }
+}
+
+static void codegen_enum_decl(Codegen *cg, ASTNode *node) {
+    // Register enum for later lookups (enums are just i64 values, no LLVM type needed)
+    register_enum(cg, node);
 }
 
 static void codegen_var_decl(Codegen *cg, ASTNode *node) {
@@ -321,6 +428,21 @@ static void codegen_var_decl(Codegen *cg, ASTNode *node) {
     if (node->var_decl.init) {
         LLVMValueRef init_val = codegen_expr(cg, node->var_decl.init);
         if (init_val) {
+            // Cast init_val to target type if needed
+            LLVMTypeRef init_type = LLVMTypeOf(init_val);
+            if (init_type != var_type) {
+                LLVMTypeKind var_kind = LLVMGetTypeKind(var_type);
+                LLVMTypeKind init_kind = LLVMGetTypeKind(init_type);
+                if (var_kind == LLVMIntegerTypeKind && init_kind == LLVMIntegerTypeKind) {
+                    // Truncate or extend integer to target size
+                    init_val = LLVMBuildIntCast2(cg->builder, init_val, var_type, 0, "var_cast");
+                } else if ((var_kind == LLVMFloatTypeKind || var_kind == LLVMDoubleTypeKind) && init_kind == LLVMIntegerTypeKind) {
+                    init_val = LLVMBuildSIToFP(cg->builder, init_val, var_type, "itof");
+                } else if ((var_kind == LLVMFloatTypeKind || var_kind == LLVMDoubleTypeKind) &&
+                           (init_kind == LLVMFloatTypeKind || init_kind == LLVMDoubleTypeKind)) {
+                    init_val = LLVMBuildFPCast(cg->builder, init_val, var_type, "fcast");
+                }
+            }
             LLVMBuildStore(cg->builder, init_val, alloca);
         }
     }
@@ -357,24 +479,32 @@ static void codegen_stmt(Codegen *cg, ASTNode *node) {
         case NODE_RETURN: {
             if (node->ret.value) {
                 LLVMValueRef val = codegen_expr(cg, node->ret.value);
-                // Cast to expected return type if needed
-                if (cg->current_fn_ret_type) {
-                    LLVMTypeRef val_type = LLVMTypeOf(val);
-                    if (val_type != cg->current_fn_ret_type) {
-                        LLVMTypeKind ret_kind = LLVMGetTypeKind(cg->current_fn_ret_type);
-                        LLVMTypeKind val_kind = LLVMGetTypeKind(val_type);
-                        if (ret_kind == LLVMIntegerTypeKind && val_kind == LLVMIntegerTypeKind) {
-                            val = LLVMBuildIntCast2(cg->builder, val, cg->current_fn_ret_type, 1, "ret_cast");
-                        } else if (ret_kind == LLVMFloatTypeKind || ret_kind == LLVMDoubleTypeKind) {
-                            if (val_kind == LLVMIntegerTypeKind) {
-                                val = LLVMBuildSIToFP(cg->builder, val, cg->current_fn_ret_type, "itof");
-                            } else {
-                                val = LLVMBuildFPCast(cg->builder, val, cg->current_fn_ret_type, "fcast");
+
+                // Check if this is a struct return (sret convention)
+                if (cg->current_fn_sret) {
+                    // Store return value to sret pointer and return void
+                    LLVMBuildStore(cg->builder, val, cg->current_fn_sret);
+                    LLVMBuildRetVoid(cg->builder);
+                } else {
+                    // Cast to expected return type if needed
+                    if (cg->current_fn_ret_type) {
+                        LLVMTypeRef val_type = LLVMTypeOf(val);
+                        if (val_type != cg->current_fn_ret_type) {
+                            LLVMTypeKind ret_kind = LLVMGetTypeKind(cg->current_fn_ret_type);
+                            LLVMTypeKind val_kind = LLVMGetTypeKind(val_type);
+                            if (ret_kind == LLVMIntegerTypeKind && val_kind == LLVMIntegerTypeKind) {
+                                val = LLVMBuildIntCast2(cg->builder, val, cg->current_fn_ret_type, 1, "ret_cast");
+                            } else if (ret_kind == LLVMFloatTypeKind || ret_kind == LLVMDoubleTypeKind) {
+                                if (val_kind == LLVMIntegerTypeKind) {
+                                    val = LLVMBuildSIToFP(cg->builder, val, cg->current_fn_ret_type, "itof");
+                                } else {
+                                    val = LLVMBuildFPCast(cg->builder, val, cg->current_fn_ret_type, "fcast");
+                                }
                             }
                         }
                     }
+                    LLVMBuildRet(cg->builder, val);
                 }
-                LLVMBuildRet(cg->builder, val);
             } else {
                 LLVMBuildRetVoid(cg->builder);
             }
@@ -774,6 +904,7 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
             LLVMValueRef fn = NULL;
             LLVMTypeRef fn_type = NULL;
             const char *fn_name = NULL;
+            Type *fn_ret_type = NULL;  // null language return type
 
             if (node->call.callee->kind == NODE_IDENT) {
                 fn_name = node->call.callee->ident;
@@ -781,6 +912,7 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
                 if (sym) {
                     fn = sym->value;
                     fn_type = sym->llvm_type;
+                    fn_ret_type = sym->type;  // This holds the original return type
                 } else {
                     fn = LLVMGetNamedFunction(cg->module, fn_name);
                     if (fn) {
@@ -795,11 +927,18 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
                     char full_name[256];
                     snprintf(full_name, sizeof(full_name), "%s_%s",
                              member->member.object->ident, member->member.member);
-                    fn = LLVMGetNamedFunction(cg->module, full_name);
-                    if (fn) {
-                        fn_type = LLVMGlobalGetValueType(fn);
-                        fn_name = full_name;
+                    CGSymbol *sym = cgscope_lookup(cg->current_scope, full_name);
+                    if (sym) {
+                        fn = sym->value;
+                        fn_type = sym->llvm_type;
+                        fn_ret_type = sym->type;
+                    } else {
+                        fn = LLVMGetNamedFunction(cg->module, full_name);
+                        if (fn) {
+                            fn_type = LLVMGlobalGetValueType(fn);
+                        }
                     }
+                    fn_name = full_name;
                 }
             }
 
@@ -810,15 +949,39 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
                 return LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0);
             }
 
-            // Build args
-            LLVMValueRef *args = malloc(sizeof(LLVMValueRef) * node->call.arg_count);
-            for (int i = 0; i < node->call.arg_count; i++) {
-                args[i] = codegen_expr(cg, node->call.args[i]);
-            }
+            // Check if this function uses sret convention
+            bool uses_sret = type_needs_sret(fn_ret_type);
 
-            LLVMValueRef result = LLVMBuildCall2(cg->builder, fn_type, fn, args, node->call.arg_count, "");
-            free(args);
-            return result;
+            if (uses_sret) {
+                // Allocate space for return value
+                LLVMTypeRef struct_type = type_to_llvm(cg, fn_ret_type);
+                LLVMValueRef sret_alloca = LLVMBuildAlloca(cg->builder, struct_type, "sret_tmp");
+
+                // Build args with sret as first argument
+                int total_args = node->call.arg_count + 1;
+                LLVMValueRef *args = malloc(sizeof(LLVMValueRef) * total_args);
+                args[0] = sret_alloca;
+                for (int i = 0; i < node->call.arg_count; i++) {
+                    args[i + 1] = codegen_expr(cg, node->call.args[i]);
+                }
+
+                // Call function (returns void, but populates sret)
+                LLVMBuildCall2(cg->builder, fn_type, fn, args, total_args, "");
+                free(args);
+
+                // Load and return the struct value
+                return LLVMBuildLoad2(cg->builder, struct_type, sret_alloca, "sret_val");
+            } else {
+                // Normal call (non-struct return)
+                LLVMValueRef *args = malloc(sizeof(LLVMValueRef) * (node->call.arg_count > 0 ? node->call.arg_count : 1));
+                for (int i = 0; i < node->call.arg_count; i++) {
+                    args[i] = codegen_expr(cg, node->call.args[i]);
+                }
+
+                LLVMValueRef result = LLVMBuildCall2(cg->builder, fn_type, fn, args, node->call.arg_count, "");
+                free(args);
+                return result;
+            }
         }
 
         case NODE_MEMBER: {
@@ -858,7 +1021,7 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
         }
 
         case NODE_INDEX: {
-            // Array indexing
+            // Array/pointer indexing
             if (node->index.object->kind == NODE_IDENT) {
                 CGSymbol *sym = cgscope_lookup(cg->current_scope, node->index.object->ident);
                 if (sym && sym->is_ptr) {
@@ -875,6 +1038,53 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
                         };
                         LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, arr_type, sym->value, indices, 2, "elem_ptr");
                         return LLVMBuildLoad2(cg->builder, elem_type, elem_ptr, "elem");
+                    }
+                    // Pointer type (ptr<T>) - treat as indexable
+                    else if (sym->type && sym->type->kind == TYPE_PTR) {
+                        elem_type = type_to_llvm(cg, sym->type->ptr_to);
+                        LLVMValueRef ptr_val = LLVMBuildLoad2(cg->builder, LLVMPointerTypeInContext(cg->context, 0), sym->value, "ptr_load");
+                        LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, elem_type, ptr_val, &idx, 1, "elem_ptr");
+                        return LLVMBuildLoad2(cg->builder, elem_type, elem_ptr, "elem");
+                    }
+                }
+            }
+            // Handle member expression (struct.field[index]) where field is a pointer
+            else if (node->index.object->kind == NODE_MEMBER) {
+                ASTNode *member = node->index.object;
+                if (member->member.object->kind == NODE_IDENT) {
+                    CGSymbol *sym = cgscope_lookup(cg->current_scope, member->member.object->ident);
+                    if (sym && sym->type && sym->type->kind == TYPE_STRUCT) {
+                        const char *struct_name = sym->type->struct_t.name;
+                        StructDef *def = find_struct_def(cg, struct_name);
+                        if (def) {
+                            // Find field index and type
+                            int field_idx = -1;
+                            Type *field_type = NULL;
+                            for (int i = 0; i < def->field_count; i++) {
+                                if (strcmp(def->field_names[i], member->member.member) == 0) {
+                                    field_idx = i;
+                                    field_type = def->field_types[i];
+                                    break;
+                                }
+                            }
+                            if (field_idx >= 0 && field_type && field_type->kind == TYPE_PTR) {
+                                LLVMTypeRef llvm_struct = LLVMGetTypeByName2(cg->context, struct_name);
+                                if (llvm_struct && sym->is_ptr) {
+                                    // GEP to field
+                                    LLVMValueRef field_ptr = LLVMBuildStructGEP2(
+                                        cg->builder, llvm_struct, sym->value, field_idx, "field_ptr");
+                                    // Load the pointer from the field
+                                    LLVMValueRef ptr_val = LLVMBuildLoad2(cg->builder,
+                                        LLVMPointerTypeInContext(cg->context, 0), field_ptr, "ptr_load");
+                                    // Get element type
+                                    LLVMTypeRef elem_type = type_to_llvm(cg, field_type->ptr_to);
+                                    // Index into the pointer
+                                    LLVMValueRef idx = codegen_expr(cg, node->index.index);
+                                    LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, elem_type, ptr_val, &idx, 1, "elem_ptr");
+                                    return LLVMBuildLoad2(cg->builder, elem_type, elem_ptr, "elem");
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -983,6 +1193,30 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
             return LLVMBuildLoad2(cg->builder, struct_type, alloca, "struct_val");
         }
 
+        case NODE_ENUM_VARIANT: {
+            // Look up enum definition and get variant value
+            EnumDef *def = find_enum_def(cg, node->enum_variant.enum_name);
+            if (!def) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Unknown enum: %s", node->enum_variant.enum_name);
+                error(cg, msg);
+                return LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0);
+            }
+
+            // Find variant value
+            for (int i = 0; i < def->variant_count; i++) {
+                if (strcmp(def->variant_names[i], node->enum_variant.variant_name) == 0) {
+                    return LLVMConstInt(LLVMInt64TypeInContext(cg->context), def->variant_values[i], 0);
+                }
+            }
+
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Unknown variant '%s' for enum '%s'",
+                     node->enum_variant.variant_name, node->enum_variant.enum_name);
+            error(cg, msg);
+            return LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0);
+        }
+
         case NODE_ARRAY_INIT: {
             // Create array value
             if (node->array_init.elem_count == 0) {
@@ -1026,18 +1260,55 @@ bool codegen_generate(Codegen *cg, ASTNode *ast) {
         }
     }
 
+    // Register all enums (enums are i64, just need to track variants)
+    for (int i = 0; i < ast->program.decl_count; i++) {
+        ASTNode *decl = ast->program.decls[i];
+        if (decl->kind == NODE_ENUM_DECL) {
+            codegen_enum_decl(cg, decl);
+        }
+    }
+
     // Second pass: declare all functions
     for (int i = 0; i < ast->program.decl_count; i++) {
         ASTNode *decl = ast->program.decls[i];
         if (decl->kind == NODE_FN_DECL) {
             // Just declare, don't generate body yet
-            LLVMTypeRef ret_type = type_to_llvm(cg, decl->fn_decl.ret_type);
-            LLVMTypeRef *param_types = malloc(sizeof(LLVMTypeRef) * decl->fn_decl.param_count);
-            for (int j = 0; j < decl->fn_decl.param_count; j++) {
-                param_types[j] = type_to_llvm(cg, decl->fn_decl.params[j]->param.param_type);
+            bool uses_sret = type_needs_sret(decl->fn_decl.ret_type);
+            LLVMTypeRef ret_type;
+            int total_params;
+            LLVMTypeRef *param_types;
+
+            if (uses_sret) {
+                ret_type = LLVMVoidTypeInContext(cg->context);
+                total_params = decl->fn_decl.param_count + 1;
+                param_types = malloc(sizeof(LLVMTypeRef) * total_params);
+                param_types[0] = LLVMPointerTypeInContext(cg->context, 0);
+                for (int j = 0; j < decl->fn_decl.param_count; j++) {
+                    param_types[j + 1] = type_to_llvm(cg, decl->fn_decl.params[j]->param.param_type);
+                }
+            } else {
+                ret_type = type_to_llvm(cg, decl->fn_decl.ret_type);
+                total_params = decl->fn_decl.param_count;
+                param_types = malloc(sizeof(LLVMTypeRef) * (total_params > 0 ? total_params : 1));
+                for (int j = 0; j < decl->fn_decl.param_count; j++) {
+                    param_types[j] = type_to_llvm(cg, decl->fn_decl.params[j]->param.param_type);
+                }
             }
-            LLVMTypeRef fn_type = LLVMFunctionType(ret_type, param_types, decl->fn_decl.param_count, 0);
-            LLVMAddFunction(cg->module, decl->fn_decl.name, fn_type);
+
+            LLVMTypeRef fn_type = LLVMFunctionType(ret_type, param_types, total_params, 0);
+            LLVMValueRef fn = LLVMAddFunction(cg->module, decl->fn_decl.name, fn_type);
+
+            // Add sret attribute if needed
+            if (uses_sret) {
+                LLVMAddAttributeAtIndex(fn, 1, LLVMCreateEnumAttribute(cg->context,
+                    LLVMGetEnumAttributeKindForName("sret", 4), 0));
+                LLVMAddAttributeAtIndex(fn, 1, LLVMCreateEnumAttribute(cg->context,
+                    LLVMGetEnumAttributeKindForName("noalias", 7), 0));
+            }
+
+            // Register in global scope with original return type
+            cgscope_define(cg->global_scope, decl->fn_decl.name, fn, fn_type, decl->fn_decl.ret_type, false);
+
             free(param_types);
         } else if (decl->kind == NODE_EXTERN) {
             for (int j = 0; j < decl->extern_decl.fn_count; j++) {
