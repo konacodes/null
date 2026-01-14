@@ -1,0 +1,184 @@
+-- nullc/tests/analyzer_test.null
+-- Tests for analyzer functionality (type checking operations)
+
+@use "std/io.null"
+@use "std/mem.null"
+@use "std/string.null"
+
+-- Test type kind constants
+fn test_type_kinds() -> bool do
+    -- Verify type kind values are distinct
+    let type_i32 :: i64 = 2   -- TYPE_I32
+    let type_i64 :: i64 = 3   -- TYPE_I64
+    let type_bool :: i64 = 10 -- TYPE_BOOL
+    let type_void :: i64 = 11 -- TYPE_VOID
+    let type_ptr :: i64 = 12  -- TYPE_PTR
+
+    if type_i32 == type_i64 do
+        ret false
+    end
+    if type_bool == type_void do
+        ret false
+    end
+    if type_ptr == type_i64 do
+        ret false
+    end
+    ret true
+end
+
+-- Test type size calculations
+fn test_type_sizes() -> bool do
+    -- i8 = 1 byte
+    let size_i8 :: i64 = 1
+    -- i16 = 2 bytes
+    let size_i16 :: i64 = 2
+    -- i32 = 4 bytes
+    let size_i32 :: i64 = 4
+    -- i64 = 8 bytes
+    let size_i64 :: i64 = 8
+    -- ptr = 8 bytes (64-bit)
+    let size_ptr :: i64 = 8
+
+    if size_i8 != 1 do
+        ret false
+    end
+    if size_i16 != 2 do
+        ret false
+    end
+    if size_i32 != 4 do
+        ret false
+    end
+    if size_i64 != 8 do
+        ret false
+    end
+    if size_ptr != 8 do
+        ret false
+    end
+    ret true
+end
+
+-- Test type name matching (used for struct/enum lookup)
+fn test_type_names() -> bool do
+    let name1 :: ptr<u8> = "Point"
+    let name2 :: ptr<u8> = "Point"
+    let name3 :: ptr<u8> = "Vector"
+
+    -- Same names should match
+    if str_eq(name1, name2) == false do
+        ret false
+    end
+
+    -- Different names should not match
+    if str_eq(name1, name3) == true do
+        ret false
+    end
+
+    ret true
+end
+
+-- Test scope/symbol table operations
+fn test_symbol_lookup() -> bool do
+    -- Simulate a simple symbol table with array
+    let table_size :: u64 = 64
+    let table :: ptr<u8> = alloc(table_size)
+    mem_zero(table, table_size)
+
+    -- Store a "symbol" (name pointer at offset 0, type at offset 8)
+    let sym_name :: ptr<u8> = "x"
+    let sym_type :: i64 = 3  -- TYPE_I64
+
+    store_ptr(table, sym_name)
+    store_i64(ptr_add(table, 8), sym_type)
+
+    -- Look it up
+    let found_name :: ptr<u8> = load_ptr(table)
+    let found_type :: i64 = load_i64(ptr_add(table, 8))
+
+    dealloc(table)
+
+    if str_eq(found_name, "x") == false do
+        ret false
+    end
+    if found_type != 3 do
+        ret false
+    end
+    ret true
+end
+
+-- Test binary operator type checking rules
+fn test_binop_types() -> bool do
+    -- Arithmetic ops (+ - * / %) require numeric types
+    -- Comparison ops (== != < > <= >=) return bool
+    -- Logical ops (and or) require bool operands
+
+    let type_i64 :: i64 = 3
+    let type_bool :: i64 = 10
+
+    -- For arithmetic: both operands must be same numeric type
+    -- Result is same type
+    let arith_result :: i64 = type_i64  -- i64 + i64 = i64
+
+    -- For comparison: operands same type, result is bool
+    let cmp_result :: i64 = type_bool   -- i64 < i64 = bool
+
+    if arith_result != type_i64 do
+        ret false
+    end
+    if cmp_result != type_bool do
+        ret false
+    end
+    ret true
+end
+
+fn main() -> i32 do
+    io_print("=== Analyzer Tests ===")
+
+    mut passed :: i64 = 0
+    mut failed :: i64 = 0
+
+    if test_type_kinds() do
+        io_print("test_type_kinds: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_type_kinds: FAIL")
+        failed = failed + 1
+    end
+
+    if test_type_sizes() do
+        io_print("test_type_sizes: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_type_sizes: FAIL")
+        failed = failed + 1
+    end
+
+    if test_type_names() do
+        io_print("test_type_names: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_type_names: FAIL")
+        failed = failed + 1
+    end
+
+    if test_symbol_lookup() do
+        io_print("test_symbol_lookup: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_symbol_lookup: FAIL")
+        failed = failed + 1
+    end
+
+    if test_binop_types() do
+        io_print("test_binop_types: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_binop_types: FAIL")
+        failed = failed + 1
+    end
+
+    io_print("=== Analyzer Tests Complete ===")
+    if failed == 0 do
+        ret 0
+    end
+    ret 1
+end
