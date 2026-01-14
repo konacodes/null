@@ -465,11 +465,61 @@ fn parse_primary(p :: Parser) -> ParseResult do
         ret res
     end
 
-    -- Identifier
+    -- Identifier (may be followed by call, member access, or index)
     if cur.tok_type == TokenType::TOK_IDENT do
         let node :: ptr<ASTNode> = make_node(NodeKind::NODE_IDENT, cur.line, cur.column)
         node_set_name(node, cur.start)
         let new_p :: Parser = parser_advance(p)
+
+        -- Check for function call: ident(args)
+        let next :: Token = new_p.current
+        if next.tok_type == TokenType::TOK_LPAREN do
+            -- Create call node
+            let call :: ptr<ASTNode> = make_node(NodeKind::NODE_CALL, cur.line, cur.column)
+            -- Store callee
+            let np :: ptr<u8> = call
+            let callee_dest :: ptr<u8> = ptr_add(np, 96)  -- callee offset
+            store_ptr(callee_dest, node)
+
+            new_p = parser_advance(new_p)  -- consume '('
+
+            -- Skip arguments for now (TODO: parse args)
+            let skip_tok :: Token = new_p.current
+            if skip_tok.tok_type != TokenType::TOK_RPAREN do
+                -- Parse arguments as expressions separated by comma
+                let args :: NodeArray = node_array_new()
+                let arg :: ParseResult = parse_expression(new_p)
+                new_p = arg.p
+                args = node_array_push(args, arg.node)
+
+                -- Check for more arguments
+                let comma_tok :: Token = new_p.current
+                if comma_tok.tok_type == TokenType::TOK_COMMA do
+                    new_p = parse_more_args(new_p, args)
+                end
+            end
+
+            new_p = consume(new_p, TokenType::TOK_RPAREN, "Expected ')' after arguments")
+            let res :: ParseResult = ParseResult { p = new_p, node = call }
+            ret res
+        end
+
+        -- Check for member access: ident.field
+        if next.tok_type == TokenType::TOK_DOT do
+            new_p = parser_advance(new_p)  -- consume '.'
+            let member_name :: Token = new_p.current
+            let member :: ptr<ASTNode> = make_node(NodeKind::NODE_MEMBER, cur.line, cur.column)
+            -- Store object
+            let np :: ptr<u8> = member
+            let obj_dest :: ptr<u8> = ptr_add(np, 72)  -- left field as object
+            store_ptr(obj_dest, node)
+            -- Store member name
+            node_set_name(member, member_name.start)
+            new_p = parser_advance(new_p)  -- consume field name
+            let res :: ParseResult = ParseResult { p = new_p, node = member }
+            ret res
+        end
+
         let res :: ParseResult = ParseResult { p = new_p, node = node }
         ret res
     end
@@ -488,6 +538,19 @@ fn parse_primary(p :: Parser) -> ParseResult do
     let null_node :: ptr<ASTNode> = 0
     let res :: ParseResult = ParseResult { p = err_p, node = null_node }
     ret res
+end
+
+-- Parse additional function arguments after the first
+fn parse_more_args(p :: Parser, args :: NodeArray) -> Parser do
+    let tok :: Token = p.current
+    if tok.tok_type == TokenType::TOK_COMMA do
+        p = parser_advance(p)  -- consume ','
+        let arg :: ParseResult = parse_expression(p)
+        p = arg.p
+        args = node_array_push(args, arg.node)
+        ret parse_more_args(p, args)
+    end
+    ret p
 end
 
 -- Parse unary expression
@@ -1016,6 +1079,32 @@ fn parser_test() -> i32 do
         print(")")
         println()
     end
+
+    -- Test 4: Parse function call
+    print("Test 4: Parse function call 'foo(1, 2)'")
+    println()
+    let call_src :: ptr<u8> = "foo(1, 2)"
+    let call_len :: i64 = 9
+    let callp :: Parser = parser_new(call_src, call_len)
+    let call_result :: ParseResult = parse_expression(callp)
+    let call_kind :: i64 = node_kind(call_result.node)
+    print("  Node kind: ")
+    print_int(call_kind)
+    print(" (expected 22=NODE_CALL)")
+    println()
+
+    -- Test 5: Parse member access
+    print("Test 5: Parse member access 'obj.field'")
+    println()
+    let mem_src :: ptr<u8> = "obj.field"
+    let mem_len :: i64 = 9
+    let memp :: Parser = parser_new(mem_src, mem_len)
+    let mem_result :: ParseResult = parse_expression(memp)
+    let mem_kind :: i64 = node_kind(mem_result.node)
+    print("  Node kind: ")
+    print_int(mem_kind)
+    print(" (expected 23=NODE_MEMBER)")
+    println()
 
     println()
     print("=== All tests passed ===")
