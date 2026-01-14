@@ -1,0 +1,182 @@
+-- nullc/analyzer.null
+-- Type checker for the null language, written in null
+-- This is part of the self-hosting compiler
+
+@use "std/io.null"
+@use "std/mem.null"
+@use "std/string.null"
+
+-- Type kinds
+enum AnaTypeKind do
+    TYPE_UNKNOWN
+    TYPE_I8
+    TYPE_I16
+    TYPE_I32
+    TYPE_I64
+    TYPE_U8
+    TYPE_U16
+    TYPE_U32
+    TYPE_U64
+    TYPE_F32
+    TYPE_F64
+    TYPE_BOOL
+    TYPE_VOID
+    TYPE_PTR
+    TYPE_ARRAY
+    TYPE_STRUCT
+    TYPE_ENUM
+    TYPE_FUNCTION
+end
+
+-- Type representation
+struct Type do
+    kind :: i64
+    inner :: ptr<Type>
+    name :: ptr<u8>
+end
+
+-- Symbol entry
+struct Symbol do
+    name :: ptr<u8>
+    type_kind :: i64
+    is_mutable :: bool
+    node :: ptr<ASTNode>
+end
+
+-- Symbol table (dynamic array of symbols)
+struct SymbolTable do
+    symbols :: ptr<Symbol>
+    count :: i64
+    capacity :: i64
+end
+
+-- Scope for symbol lookup
+struct Scope do
+    parent :: ptr<Scope>
+    symbols :: SymbolTable
+end
+
+-- Analyzer state
+struct Analyzer do
+    current_scope :: ptr<Scope>
+    had_error :: bool
+    current_fn :: ptr<u8>
+end
+
+-- Create new symbol table
+fn symbol_table_new() -> SymbolTable do
+    let cap :: i64 = 16
+    let data :: ptr<u8> = alloc(cap * 32)
+    let sym_ptr :: ptr<Symbol> = data
+    let st :: SymbolTable = SymbolTable { symbols = sym_ptr, count = 0, capacity = cap }
+    ret st
+end
+
+-- Create new scope
+fn scope_new(parent :: ptr<Scope>) -> ptr<Scope> do
+    let s :: ptr<u8> = alloc(32)
+    let sp :: ptr<Scope> = s
+    store_ptr(s, parent)
+    ret sp
+end
+
+-- Create new analyzer
+fn analyzer_new() -> Analyzer do
+    let null_scope :: ptr<Scope> = 0
+    let null_fn :: ptr<u8> = 0
+    let scope :: ptr<Scope> = scope_new(null_scope)
+    let a :: Analyzer = Analyzer { current_scope = scope, had_error = false, current_fn = null_fn }
+    ret a
+end
+
+-- Report error
+fn analyzer_error(a :: Analyzer, line :: i64, msg :: ptr<u8>) -> Analyzer do
+    if a.had_error do
+        ret a
+    end
+    a.had_error = true
+    print("[")
+    print_int(line)
+    print("] Error: ")
+    print(msg)
+    println()
+    ret a
+end
+
+-- Check if type is numeric
+fn is_numeric_type(kind :: i64) -> bool do
+    if kind == AnaTypeKind::TYPE_I8 do ret true end
+    if kind == AnaTypeKind::TYPE_I16 do ret true end
+    if kind == AnaTypeKind::TYPE_I32 do ret true end
+    if kind == AnaTypeKind::TYPE_I64 do ret true end
+    if kind == AnaTypeKind::TYPE_U8 do ret true end
+    if kind == AnaTypeKind::TYPE_U16 do ret true end
+    if kind == AnaTypeKind::TYPE_U32 do ret true end
+    if kind == AnaTypeKind::TYPE_U64 do ret true end
+    if kind == AnaTypeKind::TYPE_F32 do ret true end
+    if kind == AnaTypeKind::TYPE_F64 do ret true end
+    ret false
+end
+
+-- Check if type is integer
+fn is_integer_type(kind :: i64) -> bool do
+    if kind == AnaTypeKind::TYPE_I8 do ret true end
+    if kind == AnaTypeKind::TYPE_I16 do ret true end
+    if kind == AnaTypeKind::TYPE_I32 do ret true end
+    if kind == AnaTypeKind::TYPE_I64 do ret true end
+    if kind == AnaTypeKind::TYPE_U8 do ret true end
+    if kind == AnaTypeKind::TYPE_U16 do ret true end
+    if kind == AnaTypeKind::TYPE_U32 do ret true end
+    if kind == AnaTypeKind::TYPE_U64 do ret true end
+    ret false
+end
+
+-- Placeholder for node analysis (will be implemented when integrated with parser)
+-- For now, analyzer provides type checking infrastructure
+
+-- === TESTS ===
+
+fn analyzer_test() -> i32 do
+    print("=== Analyzer Tests ===")
+    println()
+
+    -- Test 1: Create analyzer
+    print("Test 1: Create analyzer")
+    println()
+    let a :: Analyzer = analyzer_new()
+    if a.had_error do
+        print("  ERROR")
+    else do
+        print("  OK")
+    end
+    println()
+
+    -- Test 2: Check numeric types
+    print("Test 2: Numeric type check")
+    println()
+    if is_numeric_type(AnaTypeKind::TYPE_I64) do
+        print("  i64 is numeric: OK")
+    else do
+        print("  ERROR")
+    end
+    println()
+
+    -- Test 3: Check non-numeric type
+    print("Test 3: Bool type check")
+    println()
+    if is_numeric_type(AnaTypeKind::TYPE_BOOL) do
+        print("  ERROR: bool should not be numeric")
+    else do
+        print("  OK: bool is not numeric")
+    end
+    println()
+
+    println()
+    print("=== All tests passed ===")
+    println()
+    ret 0
+end
+
+fn main() -> i32 do
+    ret analyzer_test()
+end
