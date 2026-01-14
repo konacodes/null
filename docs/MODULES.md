@@ -2,20 +2,41 @@
 
 ## Overview
 
-null uses a simple, extensible module system based on the `@use` directive. The design prioritizes:
+null uses a simple module system based on the `@use` directive. The design prioritizes:
 
 1. **Simplicity** - Easy to understand and use
 2. **Locality** - Local imports are straightforward
-3. **Extensibility** - Can be extended for remote imports
-4. **Caching** - Modules are parsed once and cached
+3. **Flat namespacing** - Module functions use underscore prefixes
 
 ## Import Syntax
 
 ```null
 @use "std/io"              -- Import std library module
-@use "std/io" as io        -- Import with alias
 @use "./local_module"      -- Import relative to current file
-@use "../sibling/module"   -- Import from parent directory
+```
+
+## Using Imported Functions
+
+Imported modules expose functions with an underscore-prefixed naming convention:
+
+```null
+@use "std/io"
+
+fn main() -> i32 do
+    io_print("Hello, world!")   -- std/io functions use io_ prefix
+    io_println("With newline")
+    ret 0
+end
+```
+
+```null
+@use "std/math"
+
+fn main() -> i32 do
+    let a :: i64 = abs(-42)           -- math functions are global
+    let b :: i64 = max(10, 20)
+    ret 0
+end
 ```
 
 ## Module Resolution
@@ -24,9 +45,8 @@ null uses a simple, extensible module system based on the `@use` directive. The 
 
 Modules starting with `std/` are resolved from the standard library:
 
-1. First, check `$NULL_STD_PATH` environment variable
-2. Then, check `./std/` relative to current directory
-3. Finally, check the bundled standard library location
+1. Check `./std/` relative to current directory
+2. Check the compiler's bundled standard library location
 
 ### Local Modules
 
@@ -38,114 +58,63 @@ Modules starting with `./` or `../` are resolved relative to the importing file:
 @use "../lib/helpers"    -- Resolves to lib/helpers.null
 ```
 
-### Absolute Paths
+## Standard Library Modules
 
-Modules can use absolute paths:
+### std/io
 
-```null
-@use "/home/user/mylib/module"
-```
-
-## Module Interface
-
-Each `.null` file is a module. By default, all top-level declarations are private. Use `pub` to export:
-
-```null
--- math.null
-pub fn add(a :: i32, b :: i32) -> i32 do
-    ret a + b
-end
-
-fn internal_helper() -> void do
-    -- This is private
-end
-```
-
-## Namespace Access
-
-Imported modules create a namespace:
+I/O operations for printing to stdout.
 
 ```null
 @use "std/io"
 
-fn main() -> i32 do
-    io.print("Hello!")  -- Access via module name
-    ret 0
+io_print("text")      -- Print without newline
+io_println("text")    -- Print with newline
+```
+
+### std/math
+
+Mathematical functions.
+
+```null
+@use "std/math"
+
+abs(n)                    -- Absolute value (i64)
+min(a, b)                 -- Minimum of two i64
+max(a, b)                 -- Maximum of two i64
+clamp(val, min, max)      -- Clamp value to range
+
+-- C math library (f64):
+sqrt(x)
+pow(base, exp)
+sin(x), cos(x), tan(x)
+log(x), exp(x)
+floor(x), ceil(x)
+fabs(x)
+```
+
+## How It Works
+
+The `@use` directive tells the compiler to include extern declarations for the module's functions. For `std/io`, this adds:
+
+```null
+@extern "C" do
+    fn puts(s :: ptr<i8>) -> i32
 end
 ```
 
-With aliases:
+The `io_print` and `io_println` functions are wrappers that call these C functions.
 
-```null
-@use "std/io" as output
+## Future Enhancements
 
-fn main() -> i32 do
-    output.print("Hello!")
-    ret 0
-end
-```
+These features are designed but not yet implemented:
 
-## Module Caching
-
-Modules are parsed and compiled once per compilation unit. If multiple files import the same module, it's only processed once.
-
-## Future: Remote Imports
-
-The module system is designed to support remote imports in the future:
-
-```null
--- Not yet implemented
-@use "https://example.com/packages/mylib@1.0.0"
-@use "github.com/user/repo/module"
-```
-
-Remote modules would be:
-1. Downloaded to a local cache (`~/.null/cache/`)
-2. Verified via checksums or lock files
-3. Compiled and linked normally
-
-## Implementation Details
-
-### Internal Representation
-
-Modules are tracked in the compiler as:
-
-```c
-typedef struct Module {
-    char *path;          // Original import path
-    char *resolved_path; // Actual file path
-    char *alias;         // Optional alias
-    ASTNode *ast;        // Parsed AST
-    bool is_compiled;    // Has been through codegen
-} Module;
-```
-
-### Name Mangling
-
-Module functions are name-mangled to avoid conflicts:
-
-```
-std/io.print -> std_io_print
-mymodule.helper -> mymodule_helper
-```
-
-This allows multiple modules to have functions with the same name.
-
-### Circular Imports
-
-Circular imports are detected and result in a compile error:
-
-```null
--- a.null
-@use "./b"  -- Error if b.null imports a.null
-
--- b.null
-@use "./a"  -- Creates circular dependency
-```
+- **Aliases**: `@use "std/io" as output`
+- **Dot notation**: `io.print("hello")`
+- **Visibility**: `pub fn` for exports
+- **Remote imports**: `@use "github.com/user/repo"`
 
 ## Best Practices
 
 1. **Use the standard library** - Prefer `std/` modules over reimplementing
 2. **Keep modules focused** - One responsibility per module
-3. **Use aliases sparingly** - Only when avoiding name conflicts
-4. **Organize by feature** - Group related modules in directories
+3. **Organize by feature** - Group related modules in directories
