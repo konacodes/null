@@ -284,9 +284,13 @@ static char *preprocess_internal(const char *source, const char *base_path, bool
                     p++;  // Skip closing quote
                 }
             }
-            // Skip to end of line
+            // Skip to end of line but preserve the newline in output
             while (*p && *p != '\n') p++;
-            if (*p == '\n') p++;
+            if (*p == '\n') {
+                // Preserve newline to maintain line structure
+                result[result_len++] = '\n';
+                p++;
+            }
             continue;
         }
 
