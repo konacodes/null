@@ -27,7 +27,7 @@ Welcome to null! This tutorial will teach you the basics of the null programming
 ### Building from Source
 
 ```bash
-git clone https://github.com/yourusername/null.git
+git clone https://github.com/konacodes/null.git
 cd null
 make
 ```

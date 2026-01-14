@@ -4,6 +4,15 @@ null
 *.o
 *.ll
 
+# Self-hosted compiler binaries
+nullc_bin
+nullc_compiler
+nullc2
+hello
+
+# Generated runtime
+nullc/runtime.c
+
 # IDE/Editor
 .idea/
 .vscode/

@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 Nothing yet.
 
+## [1.0.0] - 2026-01-14
+
+**null is now self-hosted!** The compiler can compile itself.
+
+### Added
+- **Self-hosted compiler** (`nullc/src/main.null`) - ~2,700 lines of null code
+  - Full lexer with tokenization
+  - Recursive descent parser with AST construction
+  - LLVM IR text generation
+  - CLI argument handling (argc/argv support)
+- Self-hosted compiler modules:
+  - `nullc/src/types.null` - Token, AST node, and type definitions
+  - `nullc/src/lexer.null` - Tokenization
+  - `nullc/src/parser.null` - AST construction
+  - `nullc/src/analyzer.null` - Type checking
+  - `nullc/src/codegen.null` - LLVM IR generation
+- Component test suite:
+  - `nullc/tests/lexer_test.null` - Lexer operation tests
+  - `nullc/tests/parser_test.null` - Parser operation tests
+  - `nullc/tests/analyzer_test.null` - Type system tests
+  - `nullc/tests/codegen_test.null` - Code generation tests
+- Standard library additions:
+  - `std/map.null` - Hash map with string keys (djb2 hash, separate chaining)
+  - `std/array.null` - Dynamic arrays
+  - `std/file.null` - File I/O operations
+  - `std/mem.null` - Memory allocation (malloc, free, memcpy)
+  - `std/string.null` - String operations (str_eq, str_len, str_dup)
+- Struct return values from functions
+- Enum types with `::` variant access
+- Native compilation to standalone executables (`./null build`)
+
+### Changed
+- Main function now supports argc/argv parameters
+- Function return type detection for ptr vs i64 vs i32
+
+### Technical
+- Full bootstrap chain verified: C compiler → nullc_bin → nullc2 → executables
+- 33 tests passing (13 language + 20 component tests)
+- LLVM IR text output (no LLVM C API dependency in self-hosted compiler)
+
 ## [0.1.0] - 2026-01-13
 
 Initial public release of the null programming language.
