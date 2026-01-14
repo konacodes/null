@@ -381,6 +381,32 @@ static void codegen_stmt(Codegen *cg, ASTNode *node) {
             break;
         }
 
+        case NODE_BREAK: {
+            if (!cg->loop_exit) {
+                fprintf(stderr, "Error: 'break' outside of loop\n");
+                return;
+            }
+            LLVMBuildBr(cg->builder, cg->loop_exit);
+            // Create unreachable block for any code after break
+            LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(cg->builder));
+            LLVMBasicBlockRef unreachable = LLVMAppendBasicBlockInContext(cg->context, fn, "unreachable");
+            LLVMPositionBuilderAtEnd(cg->builder, unreachable);
+            break;
+        }
+
+        case NODE_CONTINUE: {
+            if (!cg->loop_continue) {
+                fprintf(stderr, "Error: 'continue' outside of loop\n");
+                return;
+            }
+            LLVMBuildBr(cg->builder, cg->loop_continue);
+            // Create unreachable block for any code after continue
+            LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(cg->builder));
+            LLVMBasicBlockRef unreachable = LLVMAppendBasicBlockInContext(cg->context, fn, "unreachable");
+            LLVMPositionBuilderAtEnd(cg->builder, unreachable);
+            break;
+        }
+
         case NODE_IF: {
             LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(cg->builder));
 
@@ -1028,7 +1054,40 @@ bool codegen_generate(Codegen *cg, ASTNode *ast) {
         }
     }
 
-    // Third pass: generate function bodies
+    // Third pass: handle global constants
+    for (int i = 0; i < ast->program.decl_count; i++) {
+        ASTNode *decl = ast->program.decls[i];
+        if (decl->kind == NODE_VAR_DECL && decl->var_decl.is_const) {
+            // Create global constant
+            ASTNode *init = decl->var_decl.init;
+            LLVMTypeRef var_type = decl->var_decl.var_type ?
+                type_to_llvm(cg, decl->var_decl.var_type) :
+                LLVMInt64TypeInContext(cg->context);
+
+            LLVMValueRef init_val = NULL;
+            if (init->kind == NODE_LITERAL_INT) {
+                init_val = LLVMConstInt(var_type, init->int_val, 1);
+            } else if (init->kind == NODE_LITERAL_FLOAT) {
+                init_val = LLVMConstReal(var_type, init->float_val);
+            } else if (init->kind == NODE_LITERAL_BOOL) {
+                init_val = LLVMConstInt(var_type, init->bool_val ? 1 : 0, 0);
+            } else {
+                fprintf(stderr, "Codegen error: const must have literal initializer\n");
+                cg->had_error = true;
+                continue;
+            }
+
+            LLVMValueRef global = LLVMAddGlobal(cg->module, var_type, decl->var_decl.name);
+            LLVMSetInitializer(global, init_val);
+            LLVMSetGlobalConstant(global, 1);  // Mark as constant
+            LLVMSetLinkage(global, LLVMPrivateLinkage);
+
+            // Register in global scope (is_ptr=true because we need to load from the global)
+            cgscope_define(cg->global_scope, decl->var_decl.name, global, var_type, decl->var_decl.var_type, true);
+        }
+    }
+
+    // Fourth pass: generate function bodies
     for (int i = 0; i < ast->program.decl_count; i++) {
         ASTNode *decl = ast->program.decls[i];
         if (decl->kind == NODE_FN_DECL) {

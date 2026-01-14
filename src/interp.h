@@ -61,6 +61,9 @@ typedef struct {
     int func_capacity;
     Value return_value;
     bool has_return;
+    bool has_break;     // break statement executed
+    bool has_continue;  // continue statement executed
+    int loop_depth;     // current nesting level of loops
     bool had_error;
     char *error_msg;
 } Interp;

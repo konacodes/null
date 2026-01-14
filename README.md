@@ -1,18 +1,24 @@
 # null
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Built with Claude](https://img.shields.io/badge/Built%20with-Claude-blueviolet)](https://claude.ai)
+
 A compiled programming language with LLVM backend, built entirely by Claude.
 
 ## Features
 
 - **Dual execution model** - JIT compilation via LLVM or tree-walking interpreter
+- **Interactive REPL** - Explore the language interactively
 - **Native compilation** via LLVM - compiles directly to machine code
 - **Clean syntax** with `do`/`end` blocks, `::` type annotations, `@` directives
 - **Strong typing** with type inference
 - **Structs** with field access
 - **Arrays** with indexing
-- **Control flow**: if/elif/else, while loops, for..in ranges
+- **Control flow**: if/elif/else, while loops, for..in ranges with break/continue
 - **Functions** with parameters and return values
+- **Constants** with `const` keyword
 - **Module system** with `@use` imports and cycle detection
+- **Enhanced error messages** with source context and hints
 
 ## Quick Start
 

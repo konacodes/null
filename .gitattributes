@@ -1,0 +1,9 @@
+# GitHub Linguist settings
+*.null linguist-language=null
+*.null linguist-detectable=true
+
+# Mark generated files
+build/** linguist-generated=true
+
+# Documentation
+*.md linguist-documentation=true

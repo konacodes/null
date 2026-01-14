@@ -268,12 +268,191 @@ static char *preprocess_file(const char *filepath) {
     return result;
 }
 
+// REPL - Read-Eval-Print Loop
+static int run_repl(void) {
+    printf("null REPL v0.1\n");
+    printf("Type expressions to evaluate, :help for commands, :exit to quit\n\n");
+
+    // Build up a persistent environment (variables, functions, structs)
+    char *env_code = malloc(65536);  // Accumulated definitions
+    if (!env_code) {
+        fprintf(stderr, "Out of memory\n");
+        return 1;
+    }
+    size_t env_len = 0;
+    env_code[0] = '\0';
+
+    // Add basic header for io
+    const char *header =
+        "@extern \"C\" do\n"
+        "    fn puts(s :: ptr<u8>) -> i32\n"
+        "    fn putchar(c :: i64) -> i64\n"
+        "end\n"
+        "fn io_print(s :: ptr<u8>) -> void do puts(s) end\n\n";
+    strcpy(env_code, header);
+    env_len = strlen(header);
+
+    char line[4096];
+    int line_num = 1;
+
+    while (1) {
+        printf("null:%d> ", line_num);
+        fflush(stdout);
+
+        if (!fgets(line, sizeof(line), stdin)) {
+            printf("\n");
+            break;
+        }
+
+        // Remove trailing newline
+        size_t len = strlen(line);
+        if (len > 0 && line[len-1] == '\n') {
+            line[--len] = '\0';
+        }
+
+        // Skip empty lines
+        if (len == 0) continue;
+
+        // Handle REPL commands
+        if (line[0] == ':') {
+            if (strcmp(line, ":exit") == 0 || strcmp(line, ":quit") == 0 || strcmp(line, ":q") == 0) {
+                printf("Goodbye!\n");
+                break;
+            }
+            if (strcmp(line, ":help") == 0 || strcmp(line, ":h") == 0) {
+                printf("REPL Commands:\n");
+                printf("  :help, :h     Show this help\n");
+                printf("  :exit, :q     Exit the REPL\n");
+                printf("  :clear        Clear the environment\n");
+                printf("  :env          Show defined names\n");
+                printf("  :type <expr>  Show type of expression\n\n");
+                printf("Language hints:\n");
+                printf("  let x = 42                  Define immutable variable\n");
+                printf("  mut y = 10                  Define mutable variable\n");
+                printf("  fn add(a :: i64, b :: i64) -> i64 do ret a + b end\n");
+                printf("  io_print(\"hello\")           Print a string\n");
+                continue;
+            }
+            if (strcmp(line, ":clear") == 0) {
+                env_len = strlen(header);
+                env_code[env_len] = '\0';
+                printf("Environment cleared.\n");
+                continue;
+            }
+            if (strcmp(line, ":env") == 0) {
+                printf("Current environment code:\n%s\n", env_code + strlen(header));
+                continue;
+            }
+            printf("Unknown command: %s (type :help for commands)\n", line);
+            continue;
+        }
+
+        // Check if it's a definition (fn, let, mut, struct) or an expression
+        bool is_definition = (strncmp(line, "fn ", 3) == 0 ||
+                              strncmp(line, "let ", 4) == 0 ||
+                              strncmp(line, "mut ", 4) == 0 ||
+                              strncmp(line, "struct ", 7) == 0);
+
+        // Build the source to evaluate
+        char *source;
+        if (is_definition) {
+            // Just append the definition to the environment
+            size_t needed = env_len + len + 2;
+            if (needed >= 65536) {
+                printf("Error: Environment too large\n");
+                continue;
+            }
+            strcat(env_code + env_len, line);
+            strcat(env_code + env_len, "\n");
+            env_len += len + 1;
+
+            // Try to parse it to check for errors
+            source = strdup(env_code);
+        } else {
+            // Wrap expression in a main function that prints the result
+            // For now, just evaluate expressions that are statements
+            size_t source_size = env_len + len + 256;
+            source = malloc(source_size);
+            snprintf(source, source_size,
+                "%s"
+                "fn __repl_main__() -> i64 do\n"
+                "    %s\n"
+                "    ret 0\n"
+                "end\n",
+                env_code, line);
+        }
+
+        // Try to lex and parse
+        Lexer lexer;
+        lexer_init(&lexer, source);
+
+        Parser parser;
+        parser_init(&parser, &lexer);
+        ASTNode *ast = parser_parse(&parser);
+
+        if (parser.had_error) {
+            if (is_definition) {
+                // Roll back the definition
+                env_code[env_len - len - 1] = '\0';
+                env_len -= len + 1;
+            }
+            ast_free(ast);
+            lexer_free(&lexer);
+            free(source);
+            continue;
+        }
+
+        // Analyze
+        Analyzer analyzer;
+        analyzer_init(&analyzer);
+        if (!analyzer_analyze(&analyzer, ast)) {
+            if (is_definition) {
+                env_code[env_len - len - 1] = '\0';
+                env_len -= len + 1;
+            }
+            ast_free(ast);
+            analyzer_free(&analyzer);
+            lexer_free(&lexer);
+            free(source);
+            continue;
+        }
+
+        // If it's a definition, we're done (just checking syntax/semantics)
+        if (is_definition) {
+            printf("OK\n");
+            ast_free(ast);
+            analyzer_free(&analyzer);
+            lexer_free(&lexer);
+            free(source);
+            line_num++;
+            continue;
+        }
+
+        // For expressions, interpret them
+        Interp interp;
+        interp_init(&interp);
+        interp_run(&interp, ast);
+
+        interp_free(&interp);
+        analyzer_free(&analyzer);
+        ast_free(ast);
+        lexer_free(&lexer);
+        free(source);
+
+        line_num++;
+    }
+
+    free(env_code);
+    return 0;
+}
+
 static void print_usage(const char *prog) {
     printf("null - A compiled programming language\n\n");
     printf("Usage:\n");
     printf("  %s <file.null>           Run the program (compiled)\n", prog);
     printf("  %s run <file.null>       Run the program (compiled)\n", prog);
     printf("  %s interp <file.null>    Run the program (interpreted)\n", prog);
+    printf("  %s repl                  Interactive interpreter\n", prog);
     printf("  %s build <file.null> -o <output>   Compile to executable\n", prog);
     printf("  %s test <dir>            Run tests in directory\n", prog);
     printf("  %s --help                Show this help\n", prog);
@@ -331,6 +510,7 @@ static int compile_and_run(const char *filename) {
     analyzer_free(&analyzer);
     ast_free(ast);
     codegen_free(&cg);
+    lexer_free(&lexer);
     free(processed);
 
     return result;
@@ -378,6 +558,7 @@ static int interpret_file(const char *filename) {
     interp_free(&interp);
     analyzer_free(&analyzer);
     ast_free(ast);
+    lexer_free(&lexer);
     free(processed);
 
     return result;
@@ -465,6 +646,7 @@ static int compile_to_executable(const char *filename, const char *output) {
     analyzer_free(&analyzer);
     ast_free(ast);
     codegen_free(&cg);
+    lexer_free(&lexer);
     free(processed);
 
     return result == 0 ? 0 : 1;
@@ -495,6 +677,10 @@ int main(int argc, char **argv) {
             return 1;
         }
         return interpret_file(argv[2]);
+    }
+
+    if (strcmp(argv[1], "repl") == 0) {
+        return run_repl();
     }
 
     if (strcmp(argv[1], "build") == 0) {

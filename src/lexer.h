@@ -15,6 +15,7 @@ typedef enum {
     TOK_FN,             // fn
     TOK_LET,            // let
     TOK_MUT,            // mut
+    TOK_CONST,          // const
     TOK_STRUCT,         // struct
     TOK_IF,             // if
     TOK_ELIF,           // elif
@@ -24,6 +25,8 @@ typedef enum {
     TOK_IN,             // in
     TOK_MATCH,          // match
     TOK_RET,            // ret
+    TOK_BREAK,          // break
+    TOK_CONTINUE,       // continue
     TOK_DO,             // do
     TOK_END,            // end
     TOK_AND,            // and
@@ -120,6 +123,11 @@ typedef struct {
     int line;
     int column;
     int start_column;
+
+    // Source line tracking for error messages
+    const char **line_starts;  // Array of pointers to line starts
+    int line_count;            // Number of lines
+    int line_capacity;         // Capacity of line_starts array
 } Lexer;
 
 // Initialize lexer with source code
@@ -136,5 +144,14 @@ const char *token_type_name(TokenType type);
 
 // Print token for debugging
 void token_print(Token *tok);
+
+// Get pointer to the start of a line (1-indexed)
+const char *lexer_get_line(Lexer *lexer, int line_num);
+
+// Get the length of a line (excluding newline)
+int lexer_get_line_length(Lexer *lexer, int line_num);
+
+// Free lexer resources
+void lexer_free(Lexer *lexer);
 
 #endif // NULL_LEXER_H

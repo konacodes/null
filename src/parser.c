@@ -413,18 +413,107 @@ void parser_init(Parser *parser, Lexer *lexer) {
     advance(parser);
 }
 
+// Print the source line with error highlighting
+static void print_error_context(Lexer *lexer, int line, int column, int token_len) {
+    const char *line_start = lexer_get_line(lexer, line);
+    int line_len = lexer_get_line_length(lexer, line);
+
+    if (!line_start || line_len == 0) return;
+
+    // Print line number and source line
+    fprintf(stderr, "  %4d | ", line);
+    for (int i = 0; i < line_len; i++) {
+        // Replace tabs with spaces for consistent alignment
+        if (line_start[i] == '\t') {
+            fprintf(stderr, "    ");
+        } else {
+            fputc(line_start[i], stderr);
+        }
+    }
+    fprintf(stderr, "\n");
+
+    // Print caret pointing to error location
+    fprintf(stderr, "       | ");
+    for (int i = 1; i < column; i++) {
+        // Match tab handling
+        if (i <= line_len && line_start[i-1] == '\t') {
+            fprintf(stderr, "    ");
+        } else {
+            fputc(' ', stderr);
+        }
+    }
+
+    // Print caret(s) under the token
+    fprintf(stderr, "^");
+    for (int i = 1; i < token_len && (column + i - 1) < line_len; i++) {
+        fprintf(stderr, "~");
+    }
+    fprintf(stderr, "\n");
+}
+
+// Get a hint for common errors
+static const char *get_error_hint(const char *msg, Token *token) {
+    // Missing 'end' keyword hints
+    if (strstr(msg, "Expected 'end'")) {
+        return "Hint: Every 'do' block must be closed with 'end'";
+    }
+
+    // Missing closing bracket hints
+    if (strstr(msg, "Expected ']'")) {
+        return "Hint: Arrays must have matching brackets: [1, 2, 3]";
+    }
+    if (strstr(msg, "Expected ')'")) {
+        return "Hint: Function calls and expressions need matching parentheses";
+    }
+    if (strstr(msg, "Expected '}'")) {
+        return "Hint: Struct literals need matching braces: Point { x = 1, y = 2 }";
+    }
+
+    // Type annotation hints
+    if (strstr(msg, "Expected type")) {
+        return "Hint: Use type annotations like :: i64, :: bool, :: ptr<u8>";
+    }
+
+    // Expression hints
+    if (strstr(msg, "Expected expression")) {
+        return "Hint: An expression is a value like: 42, x + y, fn_call(), true";
+    }
+
+    // Missing 'do' hints
+    if (strstr(msg, "Expected 'do'")) {
+        return "Hint: Control structures use 'do' to start their body: if x > 0 do ... end";
+    }
+
+    return NULL;
+}
+
 static void error_at(Parser *p, Token *token, const char *msg) {
     if (p->panic_mode) return;
     p->panic_mode = true;
     p->had_error = true;
 
-    fprintf(stderr, "[%d:%d] Error", token->line, token->column);
+    // Print header
+    fprintf(stderr, "\n\033[1;31mError\033[0m at line %d, column %d", token->line, token->column);
     if (token->type == TOK_EOF) {
-        fprintf(stderr, " at end");
+        fprintf(stderr, " (end of file)");
     } else if (token->type != TOK_ERROR) {
-        fprintf(stderr, " at '%.*s'", (int)token->length, token->start);
+        fprintf(stderr, " near '\033[1m%.*s\033[0m'", (int)token->length, token->start);
     }
-    fprintf(stderr, ": %s\n", msg);
+    fprintf(stderr, "\n");
+
+    // Print source context
+    print_error_context(p->lexer, token->line, token->column,
+        token->type == TOK_EOF ? 1 : (int)token->length);
+
+    // Print error message
+    fprintf(stderr, "\033[1;31m%s\033[0m\n", msg);
+
+    // Print hint if available
+    const char *hint = get_error_hint(msg, token);
+    if (hint) {
+        fprintf(stderr, "\033[36m%s\033[0m\n", hint);
+    }
+    fprintf(stderr, "\n");
 }
 
 static void advance(Parser *p) {
@@ -493,7 +582,7 @@ static ASTNode *parse_decl(Parser *p) {
     if (check(p, TOK_STRUCT)) {
         return parse_struct_decl(p);
     }
-    if (check(p, TOK_LET) || check(p, TOK_MUT)) {
+    if (check(p, TOK_LET) || check(p, TOK_MUT) || check(p, TOK_CONST)) {
         return parse_var_decl(p);
     }
 
@@ -625,10 +714,17 @@ static ASTNode *parse_struct_decl(Parser *p) {
 
 static ASTNode *parse_var_decl(Parser *p) {
     bool is_mut = match(p, TOK_MUT);
-    if (!is_mut) consume(p, TOK_LET, "Expected 'let' or 'mut'.");
+    bool is_const = false;
+    if (!is_mut) {
+        is_const = match(p, TOK_CONST);
+        if (!is_const) {
+            consume(p, TOK_LET, "Expected 'let', 'mut', or 'const'.");
+        }
+    }
 
     ASTNode *node = ast_new(NODE_VAR_DECL, p->previous.line, p->previous.column);
     node->var_decl.is_mut = is_mut;
+    node->var_decl.is_const = is_const;
 
     consume(p, TOK_IDENT, "Expected variable name.");
     node->var_decl.name = str_dup(p->previous.start, p->previous.length);
@@ -735,11 +831,17 @@ static ASTNode *parse_block(Parser *p) {
 static ASTNode *parse_stmt(Parser *p) {
     skip_newlines(p);
 
-    if (check(p, TOK_LET) || check(p, TOK_MUT)) {
+    if (check(p, TOK_LET) || check(p, TOK_MUT) || check(p, TOK_CONST)) {
         return parse_var_decl(p);
     }
     if (check(p, TOK_RET)) {
         return parse_return(p);
+    }
+    if (match(p, TOK_BREAK)) {
+        return ast_new(NODE_BREAK, p->previous.line, p->previous.column);
+    }
+    if (match(p, TOK_CONTINUE)) {
+        return ast_new(NODE_CONTINUE, p->previous.line, p->previous.column);
     }
     if (check(p, TOK_IF)) {
         return parse_if(p);

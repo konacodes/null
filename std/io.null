@@ -54,3 +54,45 @@ end
 fn read_char() -> i64 do
     ret getchar()
 end
+
+-- Print an unsigned 64-bit integer
+fn print_u64(n :: u64) -> void do
+    if n == 0 do
+        putchar(48)
+        ret
+    end
+
+    mut temp :: u64 = n
+    mut divisor :: u64 = 1
+    while temp >= 10 do
+        temp = temp / 10
+        divisor = divisor * 10
+    end
+
+    while divisor > 0 do
+        let digit :: u64 = n / divisor
+        putchar(48 + digit)
+        n = n - digit * divisor
+        divisor = divisor / 10
+    end
+end
+
+-- Print a boolean value
+fn print_bool(b :: bool) -> void do
+    if b do
+        puts("true")
+    else do
+        puts("false")
+    end
+end
+
+-- Print an integer followed by newline
+fn print_int_ln(n :: i64) -> void do
+    print_int(n)
+    putchar(10)
+end
+
+-- Print a string followed by newline (alias for puts)
+fn io_print(s :: ptr<u8>) -> void do
+    puts(s)
+end

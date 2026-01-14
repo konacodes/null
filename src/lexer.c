@@ -4,6 +4,30 @@
 #include <string.h>
 #include <ctype.h>
 
+// Build an index of line starts for error reporting
+static void build_line_index(Lexer *lexer) {
+    lexer->line_capacity = 64;
+    lexer->line_starts = malloc(sizeof(const char*) * lexer->line_capacity);
+    lexer->line_count = 0;
+
+    // First line starts at source
+    lexer->line_starts[lexer->line_count++] = lexer->source;
+
+    const char *p = lexer->source;
+    while (*p) {
+        if (*p == '\n') {
+            // Ensure capacity
+            if (lexer->line_count >= lexer->line_capacity) {
+                lexer->line_capacity *= 2;
+                lexer->line_starts = realloc(lexer->line_starts,
+                    sizeof(const char*) * lexer->line_capacity);
+            }
+            lexer->line_starts[lexer->line_count++] = p + 1;
+        }
+        p++;
+    }
+}
+
 void lexer_init(Lexer *lexer, const char *source) {
     lexer->source = source;
     lexer->start = source;
@@ -11,6 +35,9 @@ void lexer_init(Lexer *lexer, const char *source) {
     lexer->line = 1;
     lexer->column = 1;
     lexer->start_column = 1;
+
+    // Build line index for error messages
+    build_line_index(lexer);
 }
 
 static int is_at_end(Lexer *lexer) {
@@ -141,7 +168,25 @@ static TokenType identifier_type(Lexer *lexer) {
                 }
             }
             break;
-        case 'b': return check_keyword(lexer, 1, 3, "ool", TOK_BOOL);
+        case 'b':
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'o': return check_keyword(lexer, 2, 2, "ol", TOK_BOOL);
+                    case 'r': return check_keyword(lexer, 2, 3, "eak", TOK_BREAK);
+                }
+            }
+            break;
+        case 'c':
+            if (lexer->current - lexer->start > 1) {
+                switch (lexer->start[1]) {
+                    case 'o':
+                        if (lexer->current - lexer->start > 3 && lexer->start[3] == 't') {
+                            return check_keyword(lexer, 2, 6, "ntinue", TOK_CONTINUE);
+                        }
+                        return check_keyword(lexer, 2, 3, "nst", TOK_CONST);
+                }
+            }
+            break;
         case 'd': return check_keyword(lexer, 1, 1, "o", TOK_DO);
         case 'e':
             if (lexer->current - lexer->start > 1) {
@@ -376,6 +421,7 @@ const char *token_type_name(TokenType type) {
         case TOK_FN: return "fn";
         case TOK_LET: return "let";
         case TOK_MUT: return "mut";
+        case TOK_CONST: return "const";
         case TOK_STRUCT: return "struct";
         case TOK_IF: return "if";
         case TOK_ELIF: return "elif";
@@ -385,6 +431,8 @@ const char *token_type_name(TokenType type) {
         case TOK_IN: return "in";
         case TOK_MATCH: return "match";
         case TOK_RET: return "ret";
+        case TOK_BREAK: return "break";
+        case TOK_CONTINUE: return "continue";
         case TOK_DO: return "do";
         case TOK_END: return "end";
         case TOK_AND: return "and";
@@ -464,4 +512,31 @@ void token_print(Token *tok) {
         printf(" '%s'", tok->start);
     }
     printf("\n");
+}
+
+const char *lexer_get_line(Lexer *lexer, int line_num) {
+    if (line_num < 1 || line_num > lexer->line_count) {
+        return NULL;
+    }
+    return lexer->line_starts[line_num - 1];  // Convert to 0-indexed
+}
+
+int lexer_get_line_length(Lexer *lexer, int line_num) {
+    const char *line = lexer_get_line(lexer, line_num);
+    if (!line) return 0;
+
+    int len = 0;
+    while (line[len] && line[len] != '\n') {
+        len++;
+    }
+    return len;
+}
+
+void lexer_free(Lexer *lexer) {
+    if (lexer->line_starts) {
+        free(lexer->line_starts);
+        lexer->line_starts = NULL;
+    }
+    lexer->line_count = 0;
+    lexer->line_capacity = 0;
 }

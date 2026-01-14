@@ -68,6 +68,8 @@ typedef enum {
     // Statements
     NODE_BLOCK,
     NODE_RETURN,
+    NODE_BREAK,
+    NODE_CONTINUE,
     NODE_IF,
     NODE_WHILE,
     NODE_FOR,
@@ -165,6 +167,7 @@ struct ASTNode {
             Type *var_type;
             ASTNode *init;
             bool is_mut;
+            bool is_const;  // compile-time constant
         } var_decl;
 
         // NODE_PARAM

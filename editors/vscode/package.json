@@ -1,0 +1,30 @@
+{
+    "name": "null-language",
+    "displayName": "null Language",
+    "description": "Syntax highlighting for the null programming language",
+    "version": "0.1.0",
+    "publisher": "null-lang",
+    "engines": {
+        "vscode": "^1.70.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "null",
+                "aliases": ["null", "Null"],
+                "extensions": [".null"],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "null",
+                "scopeName": "source.null",
+                "path": "./syntaxes/null.tmLanguage.json"
+            }
+        ]
+    }
+}

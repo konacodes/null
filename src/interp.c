@@ -469,11 +469,13 @@ static Value eval_expr(Interp *interp, ASTNode *node) {
 
 // Execute statement
 static void exec_stmt(Interp *interp, ASTNode *node) {
-    if (!node || interp->had_error || interp->has_return) return;
+    if (!node || interp->had_error || interp->has_return ||
+        interp->has_break || interp->has_continue) return;
 
     switch (node->kind) {
         case NODE_BLOCK:
-            for (int i = 0; i < node->block.stmt_count && !interp->has_return; i++) {
+            for (int i = 0; i < node->block.stmt_count &&
+                 !interp->has_return && !interp->has_break && !interp->has_continue; i++) {
                 exec_stmt(interp, node->block.stmts[i]);
             }
             break;
@@ -491,6 +493,22 @@ static void exec_stmt(Interp *interp, ASTNode *node) {
                 interp->return_value = val_void();
             }
             interp->has_return = true;
+            break;
+
+        case NODE_BREAK:
+            if (interp->loop_depth == 0) {
+                interp_error(interp, "'break' outside of loop");
+                return;
+            }
+            interp->has_break = true;
+            break;
+
+        case NODE_CONTINUE:
+            if (interp->loop_depth == 0) {
+                interp_error(interp, "'continue' outside of loop");
+                return;
+            }
+            interp->has_continue = true;
             break;
 
         case NODE_IF: {
@@ -514,11 +532,15 @@ static void exec_stmt(Interp *interp, ASTNode *node) {
         }
 
         case NODE_WHILE: {
-            while (!interp->has_return && !interp->had_error) {
+            interp->loop_depth++;
+            while (!interp->has_return && !interp->had_error && !interp->has_break) {
                 Value cond = eval_expr(interp, node->while_stmt.cond);
                 if (cond.kind != VAL_BOOL || !cond.bool_val) break;
                 exec_stmt(interp, node->while_stmt.body);
+                interp->has_continue = false;  // Reset continue for next iteration
             }
+            interp->has_break = false;  // Reset break after loop
+            interp->loop_depth--;
             break;
         }
 
@@ -533,10 +555,15 @@ static void exec_stmt(Interp *interp, ASTNode *node) {
                 scope_define(loop_scope, node->for_stmt.var_name, start, true);
                 Value *iter = scope_lookup(loop_scope, node->for_stmt.var_name);
 
-                while (iter->int_val < end.int_val && !interp->has_return && !interp->had_error) {
+                interp->loop_depth++;
+                while (iter->int_val < end.int_val && !interp->has_return &&
+                       !interp->had_error && !interp->has_break) {
                     exec_stmt(interp, node->for_stmt.body);
+                    interp->has_continue = false;  // Reset continue for next iteration
                     iter->int_val++;
                 }
+                interp->has_break = false;  // Reset break after loop
+                interp->loop_depth--;
 
                 interp->current_scope = prev;
                 scope_free(loop_scope);
@@ -595,14 +622,19 @@ int interp_run(Interp *interp, ASTNode *ast) {
         }
     }
 
-    // Find and call main
+    // Look for main function, or __repl_main__ for REPL mode
     InterpFunc *main_fn = find_func(interp, "main");
+    const char *entry_point = "main";
     if (!main_fn) {
-        interp_error(interp, "No main function found");
-        return 1;
+        main_fn = find_func(interp, "__repl_main__");
+        entry_point = "__repl_main__";
+        if (!main_fn) {
+            interp_error(interp, "No main function found");
+            return 1;
+        }
     }
 
-    Value result = call_func(interp, "main", NULL, 0);
+    Value result = call_func(interp, entry_point, NULL, 0);
     int exit_code = (result.kind == VAL_INT) ? (int)result.int_val : 0;
     val_free(&result);
 
