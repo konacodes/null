@@ -63,8 +63,9 @@ test-lang:
 	[ $$failed -eq 0 ]
 
 # Dependencies
-$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(SRC_DIR)/lexer.h $(SRC_DIR)/parser.h $(SRC_DIR)/analyzer.h $(SRC_DIR)/codegen.h
+$(BUILD_DIR)/main.o: $(SRC_DIR)/main.c $(SRC_DIR)/lexer.h $(SRC_DIR)/parser.h $(SRC_DIR)/analyzer.h $(SRC_DIR)/codegen.h $(SRC_DIR)/interp.h
 $(BUILD_DIR)/lexer.o: $(SRC_DIR)/lexer.c $(SRC_DIR)/lexer.h
 $(BUILD_DIR)/parser.o: $(SRC_DIR)/parser.c $(SRC_DIR)/parser.h $(SRC_DIR)/lexer.h
 $(BUILD_DIR)/analyzer.o: $(SRC_DIR)/analyzer.c $(SRC_DIR)/analyzer.h $(SRC_DIR)/parser.h
 $(BUILD_DIR)/codegen.o: $(SRC_DIR)/codegen.c $(SRC_DIR)/codegen.h $(SRC_DIR)/parser.h
+$(BUILD_DIR)/interp.o: $(SRC_DIR)/interp.c $(SRC_DIR)/interp.h $(SRC_DIR)/parser.h

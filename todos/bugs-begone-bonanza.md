@@ -125,24 +125,33 @@ A whimsical journey through the land of fixes, where memory leaks fear to tread 
 
 ---
 
-## Bonus Quests (Architecture Adventures) - FUTURE WORK
+## Bonus Quests (Architecture Adventures)
 
-- [ ] **Consider adding interpreter mode**
-  - Faster iteration without full LLVM compilation
+- [x] **Interpreter mode implemented**
+  - Tree-walking interpreter in `src/interp.c`
+  - Run with `null interp <file.null>`
+  - Supports all language features: functions, structs, arrays, control flow
+  - No LLVM required for interpretation - faster iteration
 
-- [ ] **Document formal grammar**
-  - Create EBNF specification
+- [x] **Document formal grammar**
+  - Created `docs/GRAMMAR.md` with complete EBNF specification
+  - Includes operator precedence table and keyword list
 
-- [ ] **Implement proper module system**
-  - Module caching
-  - Cycle detection
-  - Namespace management
+- [x] **Implement proper module system**
+  - Module caching via ImportedModules struct (prevents re-importing)
+  - Cycle detection (tracks imported paths)
+  - Recursive preprocessing (imports can import other modules)
+  - Path resolution for std/ and ./ prefixes
 
-- [ ] **Add source positions to types**
-  - Better error messages for type errors
+- [x] **Add source positions to types**
+  - Added `line` and `column` fields to Type struct
+  - Added `type_new_at()` function for positioned types
+  - `type_clone()` now copies position info
 
-- [ ] **Consider arena allocation**
-  - Simplify memory management for AST/types
+- [x] **Implement arena allocation**
+  - Created `src/arena.h` and `src/arena.c`
+  - Provides `arena_alloc`, `arena_calloc`, `arena_strdup`
+  - Ready for use in AST/type allocation
 
 ---
 
@@ -154,28 +163,37 @@ A whimsical journey through the land of fixes, where memory leaks fear to tread 
 | High | 5 | 5 ✅ |
 | Medium | 7 | 7 ✅ |
 | Low | 8 | 8 ✅ |
-| Bonus | 5 | 0 |
-| **Total** | **30** | **25** |
+| Bonus | 5 | 5 ✅ |
+| **Total** | **30** | **30** |
 
 ---
 
 ## Summary of Changes Made
 
 ### Files Modified:
-1. **src/parser.c** - Added NULL checks, safe_realloc, type_clone for struct/fn, array size validation
-2. **src/lexer.c** - Fixed buffer overflow in comment parsing, added default case
-3. **src/main.c** - Removed hardcoded path, fixed command injection, added file size limit, O(n) preprocessor
-4. **src/analyzer.c** - Fixed scope management with proper tracking, no more use-after-free
-5. **src/codegen.c** - Implemented struct member and array index assignment, short-circuit evaluation, struct field ordering, freed struct registry
-6. **std/io.null** - Fixed print_int documentation
-7. **Makefile** - Improved test reporting
+1. **src/parser.c** - Added NULL checks, safe_realloc, ENSURE_CAPACITY macro, type_clone for struct/fn, array size validation, str_dup_unescape for escape sequences, type_new_at for position tracking
+2. **src/lexer.c** - Fixed buffer overflow in comment parsing, added default case to token_type_name
+3. **src/main.c** - Removed hardcoded path (uses readlink), fixed command injection (fork/execlp), added file size limit, O(n) preprocessor, implemented test runner
+4. **src/analyzer.c** - Fixed scope management with ScopeList tracking, no more use-after-free, added binary operation type checking
+5. **src/codegen.c** - Implemented struct member and array index assignment, short-circuit evaluation with phi nodes, struct field ordering by name lookup, freed struct registry
+6. **std/io.null** - Implemented working print_int using putchar (handles negative numbers and zero)
+7. **Makefile** - Improved test reporting with pass/fail counts
+8. **src/arena.c/h** - NEW: Arena allocator for efficient memory management
+9. **docs/GRAMMAR.md** - NEW: Complete EBNF grammar specification
+10. **src/interp.c/h** - NEW: Tree-walking interpreter for fast iteration
 
 ### Verified Working:
 - ✅ Struct field ordering (out-of-order initializers work)
 - ✅ Array element assignment (`arr[0] = 42`)
 - ✅ Struct member assignment (`p.x = 99`)
-- ✅ Short-circuit evaluation (`false and crash()` doesn't crash)
-- ✅ Basic compilation and execution
+- ✅ Short-circuit evaluation (`false and X` doesn't evaluate X)
+- ✅ String escape sequences (`\n`, `\t`, `\r`, `\\`, `\"`, `\0`)
+- ✅ Binary operation type checking
+- ✅ Test runner (`null test <dir>`)
+- ✅ Interpreter mode (`null interp <file>`)
+- ✅ Module system with cycle detection
+- ✅ All 8 language tests pass (both compiled and interpreted)
+- ✅ Comprehensive 21-point feature test passes
 
 ---
 

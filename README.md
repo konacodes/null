@@ -4,6 +4,7 @@ A compiled programming language with LLVM backend, built entirely by Claude.
 
 ## Features
 
+- **Dual execution model** - JIT compilation via LLVM or tree-walking interpreter
 - **Native compilation** via LLVM - compiles directly to machine code
 - **Clean syntax** with `do`/`end` blocks, `::` type annotations, `@` directives
 - **Strong typing** with type inference
@@ -11,7 +12,7 @@ A compiled programming language with LLVM backend, built entirely by Claude.
 - **Arrays** with indexing
 - **Control flow**: if/elif/else, while loops, for..in ranges
 - **Functions** with parameters and return values
-- **Module system** with `@use` imports
+- **Module system** with `@use` imports and cycle detection
 
 ## Quick Start
 
@@ -19,11 +20,17 @@ A compiled programming language with LLVM backend, built entirely by Claude.
 # Build the compiler
 make
 
-# Run a program
+# Run a program (JIT compiled)
 ./null examples/hello.null
 
-# Compile to executable
+# Run with interpreter (no LLVM required at runtime)
+./null interp examples/hello.null
+
+# Compile to standalone executable
 ./null build program.null -o program
+
+# Run tests in a directory
+./null test tests/lang
 ```
 
 ## Syntax Overview
@@ -110,13 +117,16 @@ null/
 │   ├── lexer.c/.h      # Tokenization
 │   ├── parser.c/.h     # AST construction
 │   ├── analyzer.c/.h   # Semantic analysis
-│   └── codegen.c/.h    # LLVM code generation
+│   ├── codegen.c/.h    # LLVM code generation
+│   ├── interp.c/.h     # Tree-walking interpreter
+│   └── arena.c/.h      # Arena memory allocator
 ├── std/
 │   ├── io.null         # I/O operations
 │   └── math.null       # Math functions
 ├── tests/lang/         # Language tests
 ├── examples/           # Example programs
 └── docs/
+    ├── GRAMMAR.md      # Formal EBNF grammar
     ├── SYNTAX.md       # Syntax reference
     └── MODULES.md      # Module system docs
 ```
@@ -136,11 +146,17 @@ make clean  # Clean build
 ## Running Tests
 
 ```bash
-# Run all language tests
-for t in tests/lang/*.null; do ./null "$t"; done
+# Run all tests (compiler + language)
+make test
 
-# Run a specific test
+# Run language tests only
+./null test tests/lang
+
+# Run a specific test (JIT)
 ./null tests/lang/arithmetic.null
+
+# Run a specific test (interpreter)
+./null interp tests/lang/arithmetic.null
 ```
 
 ## Examples

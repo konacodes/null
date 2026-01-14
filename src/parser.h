@@ -32,6 +32,8 @@ typedef enum {
 
 struct Type {
     TypeKind kind;
+    int line;       // Source position for error reporting
+    int column;
     union {
         Type *ptr_to;           // for TYPE_PTR
         struct {                // for TYPE_ARRAY
@@ -315,6 +317,7 @@ void ast_free(ASTNode *node);
 
 // Type utilities
 Type *type_new(TypeKind kind);
+Type *type_new_at(TypeKind kind, int line, int column);
 Type *type_clone(Type *t);
 void type_free(Type *t);
 char *type_to_string(Type *t);

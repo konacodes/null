@@ -67,12 +67,24 @@ static void *safe_realloc(void *ptr, size_t size) {
 Type *type_new(TypeKind kind) {
     Type *t = calloc(1, sizeof(Type));
     t->kind = kind;
+    t->line = 0;
+    t->column = 0;
+    return t;
+}
+
+Type *type_new_at(TypeKind kind, int line, int column) {
+    Type *t = calloc(1, sizeof(Type));
+    t->kind = kind;
+    t->line = line;
+    t->column = column;
     return t;
 }
 
 Type *type_clone(Type *t) {
     if (!t) return NULL;
     Type *c = type_new(t->kind);
+    c->line = t->line;
+    c->column = t->column;
     switch (t->kind) {
         case TYPE_PTR:
             c->ptr_to = type_clone(t->ptr_to);

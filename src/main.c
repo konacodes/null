@@ -11,6 +11,7 @@
 #include "parser.h"
 #include "analyzer.h"
 #include "codegen.h"
+#include "interp.h"
 
 #define MAX_SOURCE_SIZE (10 * 1024 * 1024)  // 10 MB max source file size
 
@@ -81,47 +82,171 @@ static char *get_std_path(void) {
     return "./std";
 }
 
-// Simple preprocessor for @use directives
-static char *preprocess(const char *source, const char *base_path) {
-    (void)base_path;  // Unused for now
-    // For now, just strip @use directives and add extern declarations
-    // A real implementation would parse imports and include the relevant code
+// Module system for @use directives
+#define MAX_MODULES 64
 
-    // Find all @use directives and build a combined source
+typedef struct {
+    char *paths[MAX_MODULES];
+    int count;
+} ImportedModules;
+
+static ImportedModules imported_modules = {0};
+
+static void reset_imported_modules(void) {
+    for (int i = 0; i < imported_modules.count; i++) {
+        free(imported_modules.paths[i]);
+    }
+    imported_modules.count = 0;
+}
+
+static bool is_module_imported(const char *path) {
+    for (int i = 0; i < imported_modules.count; i++) {
+        if (strcmp(imported_modules.paths[i], path) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool mark_module_imported(const char *path) {
+    if (imported_modules.count >= MAX_MODULES) {
+        fprintf(stderr, "Too many modules imported (max %d)\n", MAX_MODULES);
+        return false;
+    }
+    imported_modules.paths[imported_modules.count++] = strdup(path);
+    return true;
+}
+
+static char *resolve_module_path(const char *module_path, const char *base_path) {
+    static char resolved[PATH_MAX];
+
+    // If path starts with "std/", use standard library path
+    if (strncmp(module_path, "std/", 4) == 0) {
+        snprintf(resolved, sizeof(resolved), "%s/%s", get_std_path(), module_path + 4);
+    }
+    // If path starts with "./", resolve relative to base
+    else if (strncmp(module_path, "./", 2) == 0) {
+        char base_copy[PATH_MAX];
+        strncpy(base_copy, base_path, sizeof(base_copy) - 1);
+        base_copy[sizeof(base_copy) - 1] = '\0';
+        char *dir = dirname(base_copy);
+        snprintf(resolved, sizeof(resolved), "%s/%s", dir, module_path + 2);
+    }
+    // Otherwise treat as relative to current directory
+    else {
+        snprintf(resolved, sizeof(resolved), "%s", module_path);
+    }
+
+    return resolved;
+}
+
+// Internal preprocess function - is_toplevel controls whether to add builtin header
+static char *preprocess_internal(const char *source, const char *base_path, bool is_toplevel) {
     size_t source_len = strlen(source);
-    size_t capacity = source_len * 2 + 4096;
+    size_t capacity = source_len * 4 + 8192;  // Extra space for included modules
     char *result = malloc(capacity);
     if (!result) {
         fprintf(stderr, "Out of memory in preprocessor\n");
         return NULL;
     }
 
-    // Build header with standard library extern declarations
-    const char *header =
-        "@extern \"C\" do\n"
-        "    fn puts(s :: ptr<u8>) -> i32\n"
-        "    fn printf(fmt :: ptr<u8>) -> i32\n"
-        "    fn exit(code :: i32) -> void\n"
-        "end\n\n"
-        "fn io_print(s :: ptr<u8>) -> void do\n"
-        "    puts(s)\n"
-        "end\n\n";
+    size_t result_len = 0;
 
-    size_t header_len = strlen(header);
-    memcpy(result, header, header_len);
-    size_t result_len = header_len;
+    // Only add builtin header to top-level source that doesn't have @use
+    if (is_toplevel) {
+        bool has_use_directive = (strstr(source, "@use") != NULL);
+        if (!has_use_directive) {
+            // Add minimal built-in io_print for backwards compatibility
+            const char *builtin_header =
+                "@extern \"C\" do\n"
+                "    fn puts(s :: ptr<u8>) -> i32\n"
+                "end\n"
+                "fn io_print(s :: ptr<u8>) -> void do\n"
+                "    puts(s)\n"
+                "end\n\n";
 
-    // Copy the rest, skipping @use lines - track length explicitly for O(n)
+            size_t header_len = strlen(builtin_header);
+            memcpy(result, builtin_header, header_len);
+            result_len = header_len;
+        }
+    }
+
     const char *p = source;
     while (*p) {
-        // Skip @use lines
+        // Check for @use directive
         if (strncmp(p, "@use", 4) == 0) {
+            p += 4;
+            // Skip whitespace
+            while (*p == ' ' || *p == '\t') p++;
+
+            // Parse the module path (expect "path")
+            if (*p == '"') {
+                p++;
+                const char *path_start = p;
+                while (*p && *p != '"' && *p != '\n') p++;
+
+                if (*p == '"') {
+                    size_t path_len = p - path_start;
+                    char module_path[PATH_MAX];
+                    if (path_len < sizeof(module_path)) {
+                        strncpy(module_path, path_start, path_len);
+                        module_path[path_len] = '\0';
+
+                        // Resolve the full path
+                        char *resolved = resolve_module_path(module_path, base_path);
+
+                        // Check for cycles
+                        if (!is_module_imported(resolved)) {
+                            mark_module_imported(resolved);
+
+                            // Read and preprocess the module
+                            char *module_source = read_file(resolved);
+                            if (module_source) {
+                                char *processed_module = preprocess_internal(module_source, resolved, false);
+                                free(module_source);
+
+                                if (processed_module) {
+                                    size_t module_len = strlen(processed_module);
+                                    // Ensure capacity
+                                    while (result_len + module_len + 2 >= capacity) {
+                                        capacity *= 2;
+                                        char *new_result = realloc(result, capacity);
+                                        if (!new_result) {
+                                            free(result);
+                                            free(processed_module);
+                                            return NULL;
+                                        }
+                                        result = new_result;
+                                    }
+                                    memcpy(result + result_len, processed_module, module_len);
+                                    result_len += module_len;
+                                    result[result_len++] = '\n';
+                                    result[result_len] = '\0';
+                                    free(processed_module);
+                                }
+                            }
+                        }
+                    }
+                    p++;  // Skip closing quote
+                }
+            }
+            // Skip to end of line
             while (*p && *p != '\n') p++;
             if (*p == '\n') p++;
             continue;
         }
 
-        // Copy character - O(1) operation now
+        // Ensure capacity for next character
+        if (result_len + 2 >= capacity) {
+            capacity *= 2;
+            char *new_result = realloc(result, capacity);
+            if (!new_result) {
+                free(result);
+                return NULL;
+            }
+            result = new_result;
+        }
+
         result[result_len++] = *p++;
     }
     result[result_len] = '\0';
@@ -129,11 +254,26 @@ static char *preprocess(const char *source, const char *base_path) {
     return result;
 }
 
+// Public preprocess function - always treats as top-level
+static char *preprocess(const char *source, const char *base_path) {
+    return preprocess_internal(source, base_path, true);
+}
+
+static char *preprocess_file(const char *filepath) {
+    char *source = read_file(filepath);
+    if (!source) return NULL;
+
+    char *result = preprocess(source, filepath);
+    free(source);
+    return result;
+}
+
 static void print_usage(const char *prog) {
     printf("null - A compiled programming language\n\n");
     printf("Usage:\n");
-    printf("  %s <file.null>           Run the program\n", prog);
-    printf("  %s run <file.null>       Run the program\n", prog);
+    printf("  %s <file.null>           Run the program (compiled)\n", prog);
+    printf("  %s run <file.null>       Run the program (compiled)\n", prog);
+    printf("  %s interp <file.null>    Run the program (interpreted)\n", prog);
     printf("  %s build <file.null> -o <output>   Compile to executable\n", prog);
     printf("  %s test <dir>            Run tests in directory\n", prog);
     printf("  %s --help                Show this help\n", prog);
@@ -144,7 +284,8 @@ static int compile_and_run(const char *filename) {
     if (!source) return 1;
 
     // Preprocess (handle imports)
-    char *processed = preprocess(source, get_std_path());
+    reset_imported_modules();
+    char *processed = preprocess(source, filename);
     free(source);
 
     // Lex
@@ -195,12 +336,60 @@ static int compile_and_run(const char *filename) {
     return result;
 }
 
+static int interpret_file(const char *filename) {
+    char *source = read_file(filename);
+    if (!source) return 1;
+
+    // Preprocess (handle imports)
+    reset_imported_modules();
+    char *processed = preprocess(source, filename);
+    free(source);
+
+    // Lex
+    Lexer lexer;
+    lexer_init(&lexer, processed);
+
+    // Parse
+    Parser parser;
+    parser_init(&parser, &lexer);
+    ASTNode *ast = parser_parse(&parser);
+
+    if (parser.had_error) {
+        ast_free(ast);
+        free(processed);
+        return 1;
+    }
+
+    // Analyze
+    Analyzer analyzer;
+    analyzer_init(&analyzer);
+    if (!analyzer_analyze(&analyzer, ast)) {
+        ast_free(ast);
+        analyzer_free(&analyzer);
+        free(processed);
+        return 1;
+    }
+
+    // Interpret (no LLVM needed!)
+    Interp interp;
+    interp_init(&interp);
+    int result = interp_run(&interp, ast);
+
+    interp_free(&interp);
+    analyzer_free(&analyzer);
+    ast_free(ast);
+    free(processed);
+
+    return result;
+}
+
 static int compile_to_executable(const char *filename, const char *output) {
     char *source = read_file(filename);
     if (!source) return 1;
 
     // Preprocess
-    char *processed = preprocess(source, get_std_path());
+    reset_imported_modules();
+    char *processed = preprocess(source, filename);
     free(source);
 
     // Lex
@@ -298,6 +487,14 @@ int main(int argc, char **argv) {
             return 1;
         }
         return compile_and_run(argv[2]);
+    }
+
+    if (strcmp(argv[1], "interp") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: %s interp <file.null>\n", argv[0]);
+            return 1;
+        }
+        return interpret_file(argv[2]);
     }
 
     if (strcmp(argv[1], "build") == 0) {
