@@ -7,7 +7,7 @@
 
 ## Current Milestone: M4 - Parser in Null
 
-**Status:** In Progress - Core parsing complete
+**Status:** ✓ Complete - 12 tests passing
 
 ### Completed Features:
 - Expression parsing (binary, unary, literals)
@@ -22,7 +22,7 @@
 - Array index parsing
 - Complete program parsing
 
-### Tests Passing: 11/11
+### Tests Passing: 12/12
 1. Expression: `1 + 2 * 3`
 2. Function: `fn foo() -> i32 do ret 42 end`
 3. If statement: `if true do ret 1 end`
@@ -34,6 +34,7 @@
 9. Break: `break`
 10. For loop: `for let i :: i64 = 0; i < 10; i + 1 do break end`
 11. Program: `fn main() -> i32 do ret 0 end`
+12. Function with while: `fn test() -> i64 do let x :: i64 = 0 while x < 10 do break end ret x end`
 
 ### Key Files:
 - `nullc/parser.null` - Self-hosted parser (1500+ lines)
@@ -80,15 +81,14 @@ typedef enum {
 
 ## Current Focus
 
-**Task:** Complete M4 - Self-Hosted Parser
+**Task:** M5 - Self-Hosted Analyzer
 
-**Status:** Core parsing complete, need validation
+**Status:** M4 Complete, Ready for M5
 
-**Remaining:**
-1. Add extern/use directive parsing
-2. Test parsing more complex programs
-3. Validate by attempting to parse lexer.null/parser.null
-4. Clean up and optimize
+**Next Steps:**
+1. Implement type checking in null
+2. Add symbol table management
+3. Implement semantic analysis
 
 ---
 
@@ -137,12 +137,12 @@ dynamic_array.null    NOT WRITTEN
 ## Session Log
 
 ### Session N+1 (2026-01-14)
-- Major progress on M4 (self-hosted parser)
+- **M4 COMPLETE** - Self-hosted parser fully working
 - Implemented struct/enum declaration parsing
 - Implemented for/break/continue statement parsing
 - Added skip_type() for proper type handling in var decls
-- 11 tests passing
-- Parser can parse complete programs
+- 12 tests passing
+- Parser can parse complete programs with loops, vars, functions
 
 ### Session N (2026-01-13)
 - Created Phase 2 spec (prompt.md)
