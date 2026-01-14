@@ -301,6 +301,134 @@ fn scan_number(lex :: Lexer) -> ScanResult do
     ret res
 end
 
+-- Check if identifier matches a specific keyword
+fn check_kw(src :: ptr<u8>, start :: i64, len :: i64, kw :: ptr<u8>, kwlen :: i64) -> bool do
+    if len != kwlen do
+        ret false
+    end
+    let i :: i64 = 0
+    while i < len do
+        let a :: u8 = src[start + i]
+        let b :: u8 = kw[i]
+        if a != b do
+            ret false
+        end
+        i = i + 1
+    end
+    ret true
+end
+
+-- Get keyword token type (returns TOK_IDENT if not a keyword)
+fn identifier_type(src :: ptr<u8>, start :: i64, len :: i64) -> i64 do
+    let first :: u8 = src[start]
+
+    -- Check by first character for efficiency
+    let a :: u8 = 97   -- 'a'
+    let b :: u8 = 98   -- 'b'
+    let c :: u8 = 99   -- 'c'
+    let d :: u8 = 100  -- 'd'
+    let e :: u8 = 101  -- 'e'
+    let f :: u8 = 102  -- 'f'
+    let i :: u8 = 105  -- 'i'
+    let l :: u8 = 108  -- 'l'
+    let m :: u8 = 109  -- 'm'
+    let n :: u8 = 110  -- 'n'
+    let o :: u8 = 111  -- 'o'
+    let p :: u8 = 112  -- 'p'
+    let r :: u8 = 114  -- 'r'
+    let s :: u8 = 115  -- 's'
+    let t :: u8 = 116  -- 't'
+    let u :: u8 = 117  -- 'u'
+    let v :: u8 = 118  -- 'v'
+    let w :: u8 = 119  -- 'w'
+
+    if first == a do
+        let two :: i64 = 2
+        let three :: i64 = 3
+        if check_kw(src, start, len, "and", three) do ret TokenType::TOK_AND end
+        if check_kw(src, start, len, "as", two) do ret TokenType::TOK_AS end
+    elif first == b do
+        let four :: i64 = 4
+        let five :: i64 = 5
+        if check_kw(src, start, len, "bool", four) do ret TokenType::TOK_BOOL end
+        if check_kw(src, start, len, "break", five) do ret TokenType::TOK_BREAK end
+    elif first == c do
+        let five :: i64 = 5
+        let eight :: i64 = 8
+        if check_kw(src, start, len, "const", five) do ret TokenType::TOK_CONST end
+        if check_kw(src, start, len, "continue", eight) do ret TokenType::TOK_CONTINUE end
+    elif first == d do
+        let two :: i64 = 2
+        if check_kw(src, start, len, "do", two) do ret TokenType::TOK_DO end
+    elif first == e do
+        let three :: i64 = 3
+        let four :: i64 = 4
+        if check_kw(src, start, len, "end", three) do ret TokenType::TOK_END end
+        if check_kw(src, start, len, "else", four) do ret TokenType::TOK_ELSE end
+        if check_kw(src, start, len, "elif", four) do ret TokenType::TOK_ELIF end
+        if check_kw(src, start, len, "enum", four) do ret TokenType::TOK_ENUM end
+    elif first == f do
+        let two :: i64 = 2
+        let three :: i64 = 3
+        let five :: i64 = 5
+        if check_kw(src, start, len, "fn", two) do ret TokenType::TOK_FN end
+        if check_kw(src, start, len, "for", three) do ret TokenType::TOK_FOR end
+        if check_kw(src, start, len, "f32", three) do ret TokenType::TOK_F32 end
+        if check_kw(src, start, len, "f64", three) do ret TokenType::TOK_F64 end
+        if check_kw(src, start, len, "false", five) do ret TokenType::TOK_FALSE end
+    elif first == i do
+        let two :: i64 = 2
+        let three :: i64 = 3
+        if check_kw(src, start, len, "if", two) do ret TokenType::TOK_IF end
+        if check_kw(src, start, len, "in", two) do ret TokenType::TOK_IN end
+        if check_kw(src, start, len, "i8", two) do ret TokenType::TOK_I8 end
+        if check_kw(src, start, len, "i16", three) do ret TokenType::TOK_I16 end
+        if check_kw(src, start, len, "i32", three) do ret TokenType::TOK_I32 end
+        if check_kw(src, start, len, "i64", three) do ret TokenType::TOK_I64 end
+    elif first == l do
+        let three :: i64 = 3
+        if check_kw(src, start, len, "let", three) do ret TokenType::TOK_LET end
+    elif first == m do
+        let three :: i64 = 3
+        let five :: i64 = 5
+        if check_kw(src, start, len, "mut", three) do ret TokenType::TOK_MUT end
+        if check_kw(src, start, len, "match", five) do ret TokenType::TOK_MATCH end
+    elif first == n do
+        let three :: i64 = 3
+        if check_kw(src, start, len, "not", three) do ret TokenType::TOK_NOT end
+    elif first == o do
+        let two :: i64 = 2
+        if check_kw(src, start, len, "or", two) do ret TokenType::TOK_OR end
+    elif first == p do
+        let three :: i64 = 3
+        if check_kw(src, start, len, "ptr", three) do ret TokenType::TOK_PTR end
+    elif first == r do
+        let three :: i64 = 3
+        if check_kw(src, start, len, "ret", three) do ret TokenType::TOK_RET end
+    elif first == s do
+        let six :: i64 = 6
+        if check_kw(src, start, len, "struct", six) do ret TokenType::TOK_STRUCT end
+    elif first == t do
+        let four :: i64 = 4
+        if check_kw(src, start, len, "true", four) do ret TokenType::TOK_TRUE end
+    elif first == u do
+        let two :: i64 = 2
+        let three :: i64 = 3
+        if check_kw(src, start, len, "u8", two) do ret TokenType::TOK_U8 end
+        if check_kw(src, start, len, "u16", three) do ret TokenType::TOK_U16 end
+        if check_kw(src, start, len, "u32", three) do ret TokenType::TOK_U32 end
+        if check_kw(src, start, len, "u64", three) do ret TokenType::TOK_U64 end
+    elif first == v do
+        let four :: i64 = 4
+        if check_kw(src, start, len, "void", four) do ret TokenType::TOK_VOID end
+    elif first == w do
+        let five :: i64 = 5
+        if check_kw(src, start, len, "while", five) do ret TokenType::TOK_WHILE end
+    end
+
+    ret TokenType::TOK_IDENT
+end
+
 -- Scan an identifier or keyword
 fn scan_identifier(lex :: Lexer) -> ScanResult do
     let cur :: Lexer = lex
@@ -311,14 +439,9 @@ fn scan_identifier(lex :: Lexer) -> ScanResult do
         cur = adv.lex
     end
 
-    -- Check for keywords (simplified - just check length and first char)
+    -- Check for keywords
     let len :: i64 = cur.current - lex.start
-    let first :: u8 = lex.source[lex.start]
-
-    let tok_type :: i64 = TokenType::TOK_IDENT
-
-    -- TODO: Implement proper keyword matching
-    -- For now just return identifier
+    let tok_type :: i64 = identifier_type(lex.source, lex.start, len)
 
     let tok :: Token = make_token(cur, tok_type)
     let res :: ScanResult = ScanResult { lex = cur, tok = tok }
@@ -562,9 +685,34 @@ fn print_tok_type(t :: i64) -> void do
     if t == TokenType::TOK_INT_LIT do print("INT_LIT")
     elif t == TokenType::TOK_IDENT do print("IDENT")
     elif t == TokenType::TOK_STRING_LIT do print("STRING")
+    elif t == TokenType::TOK_FN do print("FN")
+    elif t == TokenType::TOK_LET do print("LET")
+    elif t == TokenType::TOK_RET do print("RET")
+    elif t == TokenType::TOK_IF do print("IF")
+    elif t == TokenType::TOK_ELSE do print("ELSE")
+    elif t == TokenType::TOK_WHILE do print("WHILE")
+    elif t == TokenType::TOK_FOR do print("FOR")
+    elif t == TokenType::TOK_DO do print("DO")
+    elif t == TokenType::TOK_END do print("END")
+    elif t == TokenType::TOK_STRUCT do print("STRUCT")
+    elif t == TokenType::TOK_ENUM do print("ENUM")
+    elif t == TokenType::TOK_I32 do print("I32")
+    elif t == TokenType::TOK_I64 do print("I64")
+    elif t == TokenType::TOK_U8 do print("U8")
+    elif t == TokenType::TOK_PTR do print("PTR")
+    elif t == TokenType::TOK_BOOL do print("BOOL")
+    elif t == TokenType::TOK_VOID do print("VOID")
+    elif t == TokenType::TOK_TRUE do print("TRUE")
+    elif t == TokenType::TOK_FALSE do print("FALSE")
     elif t == TokenType::TOK_LPAREN do print("LPAREN")
     elif t == TokenType::TOK_RPAREN do print("RPAREN")
+    elif t == TokenType::TOK_LBRACE do print("LBRACE")
+    elif t == TokenType::TOK_RBRACE do print("RBRACE")
+    elif t == TokenType::TOK_COLONCOLON do print("COLONCOLON")
+    elif t == TokenType::TOK_COLON do print("COLON")
     elif t == TokenType::TOK_ARROW do print("ARROW")
+    elif t == TokenType::TOK_EQ do print("EQ")
+    elif t == TokenType::TOK_EQEQ do print("EQEQ")
     elif t == TokenType::TOK_NEWLINE do print("NEWLINE")
     elif t == TokenType::TOK_EOF do print("EOF")
     elif t == TokenType::TOK_ERROR do print("ERROR")
@@ -580,8 +728,8 @@ fn lexer_test() -> i32 do
     println()
 
     -- Test scanning simple source
-    let src :: ptr<u8> = "fn test() -> i32"
-    let src_len :: i64 = 16
+    let src :: ptr<u8> = "fn add(a :: i32, b :: i32) -> i32 do ret a + b end"
+    let src_len :: i64 = 50
     let lex :: Lexer = lexer_new(src, src_len)
 
     print("Scanning: ")
