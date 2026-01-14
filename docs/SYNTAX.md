@@ -3,7 +3,6 @@
 ## Philosophy
 
 null uses a clean, minimal syntax with:
-- Significant whitespace (indentation-aware)
 - Block delimiters with `do`/`end` keywords
 - No semicolons (newline-terminated statements)
 - `::` for type annotations
@@ -13,16 +12,19 @@ null uses a clean, minimal syntax with:
 
 ```null
 -- single line comment
---- multi-line
-    comment ---
 ```
 
 ## Imports
 
 ```null
-@use "std/io"           -- local/std import
-@use "std/io" as io     -- aliased import
-@use "https://..."      -- remote import (future)
+@use "std/io"           -- standard library import
+@use "./local_module"   -- relative import
+```
+
+Imported functions use underscore-prefixed names:
+```null
+@use "std/io"
+io_print("hello")       -- not io.print()
 ```
 
 ## Types
@@ -35,12 +37,11 @@ null uses a clean, minimal syntax with:
 - `void` - no value
 - `ptr<T>` - pointer to T
 - `[T; N]` - fixed array of N elements
-- `[T]` - slice/dynamic array
 
 ### Type Annotations
 ```null
 let x :: i32 = 42
-let name :: [u8] = "hello"
+let y :: i64 = 100
 ```
 
 ## Variables
@@ -54,34 +55,33 @@ let z = 100             -- type inference
 ## Functions
 
 ```null
-fn add(a :: i32, b :: i32) -> i32 do
+fn add(a :: i64, b :: i64) -> i64 do
     ret a + b
 end
 
-fn greet(name :: [u8]) -> void do
-    io.print(name)
+fn greet() -> void do
+    io_print("Hello!")
 end
-
--- short form for single expressions
-fn double(x :: i32) -> i32 = x * 2
 ```
 
 ## Structs
 
 ```null
 struct Point do
-    x :: f64
-    y :: f64
+    x :: i64
+    y :: i64
 end
 
 struct Person do
-    name :: [u8]
+    name :: ptr<i8>
     age :: i32
 end
 
 -- instantiation
-let p = Point { x = 1.0, y = 2.0 }
-let person = Person { name = "Alice", age = 30 }
+let p = Point { x = 10, y = 20 }
+
+-- field access
+let sum :: i64 = p.x + p.y
 ```
 
 ## Control Flow
@@ -89,19 +89,18 @@ let person = Person { name = "Alice", age = 30 }
 ### If/Elif/Else
 ```null
 if x > 0 do
-    io.print("positive")
+    io_print("positive")
 elif x < 0 do
-    io.print("negative")
+    io_print("negative")
 else do
-    io.print("zero")
+    io_print("zero")
 end
 ```
 
 ### While Loop
 ```null
-mut i :: i32 = 0
+mut i :: i64 = 0
 while i < 10 do
-    io.print(i)
     i = i + 1
 end
 ```
@@ -109,21 +108,16 @@ end
 ### For Loop
 ```null
 for i in 0..10 do
-    io.print(i)
-end
-
-for item in collection do
-    process(item)
+    -- i goes from 0 to 9
 end
 ```
 
-### Match (Pattern Matching)
+## Arrays
+
 ```null
-match value do
-    0 => io.print("zero")
-    1 => io.print("one")
-    _ => io.print("other")
-end
+let arr :: [i64; 5] = [1, 2, 3, 4, 5]
+let first :: i64 = arr[0]
+let third :: i64 = arr[2]
 ```
 
 ## Operators
@@ -140,27 +134,12 @@ end
 ### Bitwise
 `&`, `|`, `^`, `~`, `<<`, `>>`
 
-### Special
-- `|>` - pipe operator: `x |> fn` equals `fn(x)`
-- `?` - optional unwrap (with error handling)
-
-## Memory
-
-```null
-let p :: ptr<i32> = @alloc(i32)     -- allocate
-@free(p)                             -- deallocate
-
--- arrays
-let arr :: [i32; 5] = [1, 2, 3, 4, 5]
-let slice :: [i32] = arr[1..3]       -- slicing
-```
-
 ## FFI (Foreign Function Interface)
 
 ```null
 @extern "C" do
-    fn printf(fmt :: ptr<u8>, ...) -> i32
-    fn malloc(size :: u64) -> ptr<void>
+    fn printf(fmt :: ptr<i8>, ...) -> i32
+    fn puts(s :: ptr<i8>) -> i32
 end
 ```
 
@@ -169,8 +148,10 @@ end
 Programs start at `main`:
 
 ```null
+@use "std/io"
+
 fn main() -> i32 do
-    io.print("Hello, world!")
+    io_print("Hello, world!")
     ret 0
 end
 ```
@@ -180,18 +161,36 @@ end
 ```null
 @use "std/io"
 
-struct Greeter do
-    prefix :: [u8]
+struct Point do
+    x :: i64
+    y :: i64
 end
 
-fn greet(g :: Greeter, name :: [u8]) -> void do
-    io.print(g.prefix)
-    io.print(name)
+fn dot(a :: Point, b :: Point) -> i64 do
+    ret a.x * b.x + a.y * b.y
 end
 
 fn main() -> i32 do
-    let g = Greeter { prefix = "Hello, " }
-    greet(g, "world!")
+    let p1 = Point { x = 3, y = 4 }
+    let p2 = Point { x = 1, y = 2 }
+
+    let result :: i64 = dot(p1, p2)
+    -- result = 3*1 + 4*2 = 11
+
+    io_print("Done!")
     ret 0
 end
 ```
+
+## Future Features (Not Yet Implemented)
+
+These features are designed but not available in the current version:
+
+- **Aliased imports**: `@use "std/io" as io`
+- **Dot notation namespaces**: `io.print()` instead of `io_print()`
+- **Pattern matching**: `match`/`end` blocks
+- **Pipe operator**: `|>` for function chaining
+- **Slices**: `[T]` dynamic arrays and `arr[1..3]` slicing
+- **Multi-line comments**: `--- ... ---`
+- **Short function syntax**: `fn double(x :: i32) -> i32 = x * 2`
+- **Struct returns**: Returning structs from functions
