@@ -1,0 +1,234 @@
+-- nullc/tests/parser_test.null
+-- Tests for the self-hosted parser
+
+@use "std/io.null"
+@use "std/mem.null"
+@use "std/string.null"
+@use "nullc/src/parser.null"
+
+fn test_parse_literal() -> bool do
+    let src :: ptr<u8> = "42"
+    let len :: i64 = 2
+    mut p :: Parser = parser_new(src, len)
+
+    let result :: ParseResult = parse_expr(p)
+    p = result.p
+
+    if p.had_error do
+        io_print("FAIL: parse error on literal")
+        ret false
+    end
+
+    -- Check node kind is literal int
+    let null_ptr :: ptr<u8> = 0
+    if result.node == null_ptr do
+        io_print("FAIL: null node for literal")
+        ret false
+    end
+
+    ret true
+end
+
+fn test_parse_binary_expr() -> bool do
+    let src :: ptr<u8> = "1 + 2"
+    let len :: i64 = 5
+    mut p :: Parser = parser_new(src, len)
+
+    let result :: ParseResult = parse_expr(p)
+    p = result.p
+
+    if p.had_error do
+        io_print("FAIL: parse error on binary expr")
+        ret false
+    end
+
+    let null_ptr :: ptr<u8> = 0
+    if result.node == null_ptr do
+        io_print("FAIL: null node for binary expr")
+        ret false
+    end
+
+    ret true
+end
+
+fn test_parse_function() -> bool do
+    let src :: ptr<u8> = "fn foo() -> i32 do ret 0 end"
+    let len :: i64 = 28
+    mut p :: Parser = parser_new(src, len)
+
+    let result :: ParseResult = parse_declaration(p)
+    p = result.p
+
+    if p.had_error do
+        io_print("FAIL: parse error on function")
+        ret false
+    end
+
+    let null_ptr :: ptr<u8> = 0
+    if result.node == null_ptr do
+        io_print("FAIL: null node for function")
+        ret false
+    end
+
+    ret true
+end
+
+fn test_parse_if_stmt() -> bool do
+    let src :: ptr<u8> = "if true do ret 1 end"
+    let len :: i64 = 20
+    mut p :: Parser = parser_new(src, len)
+
+    let result :: ParseResult = parse_statement(p)
+    p = result.p
+
+    if p.had_error do
+        io_print("FAIL: parse error on if statement")
+        ret false
+    end
+
+    ret true
+end
+
+fn test_parse_while_stmt() -> bool do
+    let src :: ptr<u8> = "while x < 10 do x = x + 1 end"
+    let len :: i64 = 29
+    mut p :: Parser = parser_new(src, len)
+
+    let result :: ParseResult = parse_statement(p)
+    p = result.p
+
+    if p.had_error do
+        io_print("FAIL: parse error on while statement")
+        ret false
+    end
+
+    ret true
+end
+
+fn test_parse_var_decl() -> bool do
+    let src :: ptr<u8> = "let x :: i64 = 42"
+    let len :: i64 = 17
+    mut p :: Parser = parser_new(src, len)
+
+    let result :: ParseResult = parse_statement(p)
+    p = result.p
+
+    if p.had_error do
+        io_print("FAIL: parse error on var decl")
+        ret false
+    end
+
+    ret true
+end
+
+fn test_parse_call_expr() -> bool do
+    let src :: ptr<u8> = "foo(1, 2, 3)"
+    let len :: i64 = 12
+    mut p :: Parser = parser_new(src, len)
+
+    let result :: ParseResult = parse_expr(p)
+    p = result.p
+
+    if p.had_error do
+        io_print("FAIL: parse error on call expr")
+        ret false
+    end
+
+    ret true
+end
+
+fn test_parse_struct_decl() -> bool do
+    let src :: ptr<u8> = "struct Point do x :: i64 y :: i64 end"
+    let len :: i64 = 37
+    mut p :: Parser = parser_new(src, len)
+
+    let result :: ParseResult = parse_declaration(p)
+    p = result.p
+
+    if p.had_error do
+        io_print("FAIL: parse error on struct decl")
+        ret false
+    end
+
+    ret true
+end
+
+fn main() -> i32 do
+    io_print("=== Parser Tests ===")
+
+    mut passed :: i64 = 0
+    mut failed :: i64 = 0
+
+    if test_parse_literal() do
+        io_print("test_parse_literal: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_parse_literal: FAIL")
+        failed = failed + 1
+    end
+
+    if test_parse_binary_expr() do
+        io_print("test_parse_binary_expr: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_parse_binary_expr: FAIL")
+        failed = failed + 1
+    end
+
+    if test_parse_function() do
+        io_print("test_parse_function: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_parse_function: FAIL")
+        failed = failed + 1
+    end
+
+    if test_parse_if_stmt() do
+        io_print("test_parse_if_stmt: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_parse_if_stmt: FAIL")
+        failed = failed + 1
+    end
+
+    if test_parse_while_stmt() do
+        io_print("test_parse_while_stmt: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_parse_while_stmt: FAIL")
+        failed = failed + 1
+    end
+
+    if test_parse_var_decl() do
+        io_print("test_parse_var_decl: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_parse_var_decl: FAIL")
+        failed = failed + 1
+    end
+
+    if test_parse_call_expr() do
+        io_print("test_parse_call_expr: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_parse_call_expr: FAIL")
+        failed = failed + 1
+    end
+
+    if test_parse_struct_decl() do
+        io_print("test_parse_struct_decl: PASS")
+        passed = passed + 1
+    else do
+        io_print("test_parse_struct_decl: FAIL")
+        failed = failed + 1
+    end
+
+    io_print("=== Results ===")
+    if failed == 0 do
+        io_print("All parser tests passed!")
+        ret 0
+    else do
+        io_print("Some tests failed")
+        ret 1
+    end
+end
