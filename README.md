@@ -1,5 +1,6 @@
 # null
 
+[![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://github.com/jace/null/releases/tag/v0.1.0)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Built with Claude](https://img.shields.io/badge/Built%20with-Claude-blueviolet)](https://claude.ai)
 
