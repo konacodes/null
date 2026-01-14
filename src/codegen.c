@@ -732,6 +732,13 @@ static void codegen_stmt(Codegen *cg, ASTNode *node) {
                             LLVMValueRef ptr_val = LLVMBuildLoad2(cg->builder, ptr_type, sym->value, "ptr_load");
                             LLVMTypeRef elem_type = type_to_llvm(cg, sym->type->ptr_to);
                             LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, elem_type, ptr_val, &idx, 1, "elem_ptr");
+                            // Truncate value to element type if needed
+                            LLVMTypeRef val_type = LLVMTypeOf(val);
+                            if (val_type != elem_type &&
+                                LLVMGetTypeKind(val_type) == LLVMIntegerTypeKind &&
+                                LLVMGetTypeKind(elem_type) == LLVMIntegerTypeKind) {
+                                val = LLVMBuildIntCast2(cg->builder, val, elem_type, 0, "trunc");
+                            }
                             LLVMBuildStore(cg->builder, val, elem_ptr);
                         }
                     }
@@ -1158,6 +1165,13 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
                             LLVMValueRef ptr_val = LLVMBuildLoad2(cg->builder, ptr_type, sym->value, "ptr_load");
                             LLVMTypeRef elem_type = type_to_llvm(cg, sym->type->ptr_to);
                             LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, elem_type, ptr_val, &idx, 1, "elem_ptr");
+                            // Truncate value to element type if needed
+                            LLVMTypeRef val_type = LLVMTypeOf(val);
+                            if (val_type != elem_type &&
+                                LLVMGetTypeKind(val_type) == LLVMIntegerTypeKind &&
+                                LLVMGetTypeKind(elem_type) == LLVMIntegerTypeKind) {
+                                val = LLVMBuildIntCast2(cg->builder, val, elem_type, 0, "trunc");
+                            }
                             LLVMBuildStore(cg->builder, val, elem_ptr);
                         }
                     }

@@ -15,6 +15,7 @@
     fn fwrite(buf :: ptr<u8>, size :: u64, count :: u64, f :: ptr<u8>) -> u64
     fn fseek(f :: ptr<u8>, offset :: i64, whence :: i32) -> i32
     fn ftell(f :: ptr<u8>) -> i64
+    fn fflush(f :: ptr<u8>) -> i32
 end
 
 -- Memory allocation
@@ -2110,32 +2111,22 @@ end
 -- Main entry point
 -- ============================================================================
 fn main() -> i32 do
-    puts("mini: starting")
-    let src :: ptr<u8> = file_read_all("/tmp/claude/two_fns.null")
-    puts("mini: file read done")
+    let src :: ptr<u8> = file_read_all("/tmp/claude/aaa.null")
     let null_ptr :: ptr<u8> = 0
     if src == null_ptr do
-        puts("mini: file not found")
+        puts("Error: could not read input file")
         ret 1
     end
-    puts("mini: getting length")
     let src_len :: i64 = my_str_len(src)
-    puts("mini: creating lexer")
     let lex :: ptr<u8> = lexer_new(src, src_len)
-    puts("mini: creating parser")
     let parser :: ptr<u8> = parser_new(lex)
-    puts("mini: parsing")
     let prog :: ptr<u8> = parse_program(parser)
-    puts("mini: creating codegen")
     let cg :: ptr<u8> = cg_new()
-    puts("mini: generating code")
     cg_program(cg, prog)
-    puts("mini: writing output")
     let out_buf :: ptr<u8> = cg_buf(cg)
     let out_data :: ptr<u8> = buf_get_data(out_buf)
     let out_len :: i64 = buf_get_len(out_buf)
     let result :: i32 = my_file_write_all("/tmp/claude/mini_out.ll", out_data, out_len)
-    puts("mini: done")
     ret 0
 end
 
