@@ -780,6 +780,7 @@ fn lexer_test() -> i32 do
     ret 0
 end
 
-fn main() -> i32 do
-    ret lexer_test()
-end
+-- main function moved to parser.null for testing
+-- fn main() -> i32 do
+--     ret lexer_test()
+-- end

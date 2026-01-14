@@ -712,19 +712,28 @@ static void codegen_stmt(Codegen *cg, ASTNode *node) {
                     }
                 }
             } else if (node->assign.target->kind == NODE_INDEX) {
-                // Array index assignment
+                // Array/pointer index assignment
                 ASTNode *index_node = node->assign.target;
                 if (index_node->index.object->kind == NODE_IDENT) {
                     CGSymbol *sym = cgscope_lookup(cg->current_scope, index_node->index.object->ident);
-                    if (sym && sym->is_ptr && sym->type && sym->type->kind == TYPE_ARRAY) {
+                    if (sym && sym->is_ptr && sym->type) {
                         LLVMValueRef idx = codegen_expr(cg, index_node->index.index);
-                        LLVMTypeRef arr_type = type_to_llvm(cg, sym->type);
-                        LLVMValueRef indices[2] = {
-                            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
-                            idx
-                        };
-                        LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, arr_type, sym->value, indices, 2, "elem_ptr");
-                        LLVMBuildStore(cg->builder, val, elem_ptr);
+                        if (sym->type->kind == TYPE_ARRAY) {
+                            LLVMTypeRef arr_type = type_to_llvm(cg, sym->type);
+                            LLVMValueRef indices[2] = {
+                                LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
+                                idx
+                            };
+                            LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, arr_type, sym->value, indices, 2, "elem_ptr");
+                            LLVMBuildStore(cg->builder, val, elem_ptr);
+                        } else if (sym->type->kind == TYPE_PTR) {
+                            // Pointer indexing: load the pointer, then GEP into it
+                            LLVMTypeRef ptr_type = type_to_llvm(cg, sym->type);
+                            LLVMValueRef ptr_val = LLVMBuildLoad2(cg->builder, ptr_type, sym->value, "ptr_load");
+                            LLVMTypeRef elem_type = type_to_llvm(cg, sym->type->ptr_to);
+                            LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, elem_type, ptr_val, &idx, 1, "elem_ptr");
+                            LLVMBuildStore(cg->builder, val, elem_ptr);
+                        }
                     }
                 }
             }
@@ -1129,19 +1138,28 @@ static LLVMValueRef codegen_expr(Codegen *cg, ASTNode *node) {
                     }
                 }
             } else if (node->assign.target->kind == NODE_INDEX) {
-                // Array index assignment in expression context
+                // Array/pointer index assignment in expression context
                 ASTNode *index_node = node->assign.target;
                 if (index_node->index.object->kind == NODE_IDENT) {
                     CGSymbol *sym = cgscope_lookup(cg->current_scope, index_node->index.object->ident);
-                    if (sym && sym->is_ptr && sym->type && sym->type->kind == TYPE_ARRAY) {
+                    if (sym && sym->is_ptr && sym->type) {
                         LLVMValueRef idx = codegen_expr(cg, index_node->index.index);
-                        LLVMTypeRef arr_type = type_to_llvm(cg, sym->type);
-                        LLVMValueRef indices[2] = {
-                            LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
-                            idx
-                        };
-                        LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, arr_type, sym->value, indices, 2, "elem_ptr");
-                        LLVMBuildStore(cg->builder, val, elem_ptr);
+                        if (sym->type->kind == TYPE_ARRAY) {
+                            LLVMTypeRef arr_type = type_to_llvm(cg, sym->type);
+                            LLVMValueRef indices[2] = {
+                                LLVMConstInt(LLVMInt64TypeInContext(cg->context), 0, 0),
+                                idx
+                            };
+                            LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, arr_type, sym->value, indices, 2, "elem_ptr");
+                            LLVMBuildStore(cg->builder, val, elem_ptr);
+                        } else if (sym->type->kind == TYPE_PTR) {
+                            // Pointer indexing: load the pointer, then GEP into it
+                            LLVMTypeRef ptr_type = type_to_llvm(cg, sym->type);
+                            LLVMValueRef ptr_val = LLVMBuildLoad2(cg->builder, ptr_type, sym->value, "ptr_load");
+                            LLVMTypeRef elem_type = type_to_llvm(cg, sym->type->ptr_to);
+                            LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, elem_type, ptr_val, &idx, 1, "elem_ptr");
+                            LLVMBuildStore(cg->builder, val, elem_ptr);
+                        }
                     }
                 }
             }

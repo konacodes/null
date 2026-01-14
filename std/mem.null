@@ -56,3 +56,58 @@ fn mem_zero(s :: ptr<u8>, n :: u64) -> ptr<u8> do
     let zero :: i32 = 0
     ret memset(s, zero, n)
 end
+
+-- Pointer arithmetic: add offset to pointer
+fn ptr_add(p :: ptr<u8>, offset :: i64) -> ptr<u8> do
+    let addr :: i64 = p
+    let new_addr :: i64 = addr + offset
+    let result :: ptr<u8> = new_addr
+    ret result
+end
+
+-- Store a 64-bit integer at memory location using byte-by-byte writes
+fn store_i64(dest :: ptr<u8>, val :: i64) -> void do
+    let b0 :: u8 = val
+    let b1 :: u8 = val >> 8
+    let b2 :: u8 = val >> 16
+    let b3 :: u8 = val >> 24
+    let b4 :: u8 = val >> 32
+    let b5 :: u8 = val >> 40
+    let b6 :: u8 = val >> 48
+    let b7 :: u8 = val >> 56
+    dest[0] = b0
+    dest[1] = b1
+    dest[2] = b2
+    dest[3] = b3
+    dest[4] = b4
+    dest[5] = b5
+    dest[6] = b6
+    dest[7] = b7
+end
+
+-- Load a 64-bit integer from memory location
+fn load_i64(src :: ptr<u8>) -> i64 do
+    let b0 :: i64 = src[0]
+    let b1 :: i64 = src[1]
+    let b2 :: i64 = src[2]
+    let b3 :: i64 = src[3]
+    let b4 :: i64 = src[4]
+    let b5 :: i64 = src[5]
+    let b6 :: i64 = src[6]
+    let b7 :: i64 = src[7]
+    let result :: i64 = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56)
+    ret result
+end
+
+-- Store a pointer at memory location (pointers are 8 bytes on 64-bit)
+fn store_ptr(dest :: ptr<u8>, val :: ptr<u8>) -> void do
+    let v :: i64 = val
+    store_i64(dest, v)
+end
+
+-- Load a pointer from memory location
+fn load_ptr(src :: ptr<u8>) -> ptr<u8> do
+    let v :: i64 = load_i64(src)
+    let result :: ptr<u8> = v
+    ret result
+end
