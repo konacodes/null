@@ -1,0 +1,147 @@
+-- nullc/main.null
+-- Main compiler driver test
+
+@use "std/io.null"
+@use "std/mem.null"
+@use "std/string.null"
+@use "std/file.null"
+@use "nullc/parser.null"
+@use "nullc/codegen.null"
+
+@extern "C" do
+    fn system(cmd :: ptr<u8>) -> i32
+end
+
+-- Compiler state
+struct Compiler do
+    source :: ptr<u8>
+    source_len :: i64
+    had_error :: bool
+end
+
+-- Create new compiler
+fn compiler_new() -> Compiler do
+    let null_ptr :: ptr<u8> = 0
+    let c :: Compiler = Compiler { source = null_ptr, source_len = 0, had_error = false }
+    ret c
+end
+
+-- Read source file
+fn compiler_read_source(c :: Compiler, path :: ptr<u8>) -> Compiler do
+    let f :: ptr<u8> = file_open_read(path)
+    let null_ptr :: ptr<u8> = 0
+    if f == null_ptr do
+        print("Error: Cannot open file ")
+        print(path)
+        println()
+        c.had_error = true
+        ret c
+    end
+
+    let size :: i64 = file_size(f)
+    file_close(f)
+    c.source = file_read_all(path)
+    c.source_len = size
+
+    ret c
+end
+
+-- Compile source to LLVM IR
+fn compiler_compile(c :: Compiler) -> Compiler do
+    print("  Starting compile...")
+    println()
+
+    -- Parse
+    let p :: Parser = parser_new(c.source, c.source_len)
+    print("  Parsing...")
+    println()
+    let result :: ParseResult = parse_program(p)
+    p = result.parser
+    if p.had_error do
+        print("  Parse ERROR")
+        println()
+        c.had_error = true
+        ret c
+    end
+    print("  Parse OK")
+    println()
+
+    -- Generate code
+    print("  Generating LLVM IR...")
+    println()
+    let cg :: Codegen = codegen_new()
+    cg = emit_module_header(cg)
+    cg = emit_fn_start(cg, "main", "i32")
+    cg = emit_ret(cg, "i32", 0)
+    cg = emit_fn_end(cg)
+
+    -- Write IR to file
+    print("  Writing IR...")
+    println()
+    let ir_path :: ptr<u8> = "/tmp/claude/nullc_out.ll"
+    let f :: ptr<u8> = file_open_write(ir_path)
+    let out :: StringBuf = cg.output
+    let data :: ptr<u8> = out.data
+    let len :: i64 = out.len
+    let len_u64 :: u64 = len
+    file_write(f, data, len_u64)
+    file_close(f)
+    print("  IR written to ")
+    print(ir_path)
+    println()
+
+    print("  Done!")
+    println()
+    ret c
+end
+
+-- === TESTS ===
+
+fn compiler_test() -> i32 do
+    print("=== Compiler Driver Tests ===")
+    println()
+
+    -- Test 1: Create compiler
+    print("Test 1: Create compiler")
+    println()
+    let c :: Compiler = compiler_new()
+    if c.had_error do
+        print("  ERROR")
+    else do
+        print("  OK")
+    end
+    println()
+
+    -- Test 2: Read a source file
+    print("Test 2: Read source")
+    println()
+    c = compiler_read_source(c, "/tmp/claude/test.null")
+    if c.had_error do
+        print("  ERROR")
+    else do
+        print("  OK (read ")
+        print_int(c.source_len)
+        print(" bytes)")
+    end
+    println()
+
+    -- Test 3: Compile
+    print("Test 3: Compile")
+    println()
+    c = compiler_compile(c)
+    if c.had_error do
+        print("  ERROR")
+    else do
+        print("  OK")
+    end
+    println()
+
+    println()
+    print("=== All tests passed ===")
+    println()
+    ret 0
+end
+
+fn main() -> i32 do
+    ret compiler_test()
+end

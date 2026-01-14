@@ -177,6 +177,6 @@ fn analyzer_test() -> i32 do
     ret 0
 end
 
-fn main() -> i32 do
+fn analyzer_main() -> i32 do
     ret analyzer_test()
 end

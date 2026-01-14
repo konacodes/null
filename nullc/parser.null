@@ -963,6 +963,25 @@ end
 fn parse_statement(p :: Parser) -> ParseResult do
     let cur :: Token = p.current
 
+    -- Skip newlines
+    if cur.tok_type == TokenType::TOK_NEWLINE do
+        p = parser_advance(p)
+        ret parse_statement(p)
+    end
+
+    -- Return null if we hit 'end' or EOF (let caller handle)
+    if cur.tok_type == TokenType::TOK_END do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+
+    if cur.tok_type == TokenType::TOK_EOF do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+
     if cur.tok_type == TokenType::TOK_RET do
         ret parse_return(p)
     end
@@ -1041,8 +1060,12 @@ fn parse_block_cont(p :: Parser, stmts :: NodeArray) -> ParseResult do
         if check.tok_type != TokenType::TOK_EOF do
             let stmt :: ParseResult = parse_statement(p)
             p = stmt.p
-            stmts = node_array_push(stmts, stmt.node)
-            ret parse_block_cont(p, stmts)
+            -- Only push if we got a valid statement
+            let null_check :: ptr<ASTNode> = 0
+            if stmt.node != null_check do
+                stmts = node_array_push(stmts, stmt.node)
+                ret parse_block_cont(p, stmts)
+            end
         end
     end
 
@@ -1277,7 +1300,19 @@ end
 
 -- Parse top-level declaration
 fn parse_declaration(p :: Parser) -> ParseResult do
+    -- Skip any leading newlines
     let cur :: Token = p.current
+    if cur.tok_type == TokenType::TOK_NEWLINE do
+        p = parser_advance(p)
+        ret parse_declaration(p)
+    end
+
+    -- EOF is not an error - just return null
+    if cur.tok_type == TokenType::TOK_EOF do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
 
     if cur.tok_type == TokenType::TOK_FN do
         ret parse_fn_decl(p)
@@ -1533,6 +1568,6 @@ fn parser_test() -> i32 do
     ret 0
 end
 
-fn main() -> i32 do
+fn parser_main() -> i32 do
     ret parser_test()
 end

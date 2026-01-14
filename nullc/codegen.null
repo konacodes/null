@@ -6,62 +6,393 @@
 @use "std/mem.null"
 @use "std/string.null"
 
+-- String buffer for output
+struct StringBuf do
+    data :: ptr<u8>
+    len :: i64
+    cap :: i64
+end
+
+-- Create new string buffer
+fn strbuf_new() -> StringBuf do
+    let cap :: i64 = 4096
+    let data :: ptr<u8> = alloc(cap)
+    let sb :: StringBuf = StringBuf { data = data, len = 0, cap = cap }
+    ret sb
+end
+
+-- Append character to buffer
+fn strbuf_putc(sb :: StringBuf, c :: u8) -> StringBuf do
+    if sb.len >= sb.cap do
+        -- Need to grow buffer
+        let new_cap :: i64 = sb.cap * 2
+        let new_data :: ptr<u8> = alloc(new_cap)
+        mem_copy(new_data, sb.data, sb.len)
+        sb.data = new_data
+        sb.cap = new_cap
+    end
+    let dest :: ptr<u8> = ptr_add(sb.data, sb.len)
+    let cv :: i64 = c
+    store_i64(dest, cv)
+    sb.len = sb.len + 1
+    ret sb
+end
+
+-- Load byte from memory
+fn load_byte(p :: ptr<u8>) -> u8 do
+    let v :: i64 = load_i64(p)
+    let masked :: i64 = v - ((v / 256) * 256)  -- v & 0xFF
+    let b :: u8 = masked
+    ret b
+end
+
+-- Append string to buffer
+fn strbuf_puts(sb :: StringBuf, s :: ptr<u8>) -> StringBuf do
+    let i :: i64 = 0
+    let c :: u8 = load_byte(s)
+    let zero :: u8 = 0
+    while c != zero do
+        sb = strbuf_putc(sb, c)
+        i = i + 1
+        let next :: ptr<u8> = ptr_add(s, i)
+        c = load_byte(next)
+    end
+    ret sb
+end
+
+-- Append integer as string to buffer
+fn strbuf_puti(sb :: StringBuf, n :: i64) -> StringBuf do
+    if n < 0 do
+        let minus :: u8 = 45  -- '-'
+        sb = strbuf_putc(sb, minus)
+        n = 0 - n
+    end
+    if n == 0 do
+        let zero :: u8 = 48  -- '0'
+        sb = strbuf_putc(sb, zero)
+        ret sb
+    end
+    -- Write digits in reverse, then reverse
+    let start :: i64 = sb.len
+    while n > 0 do
+        let digit :: i64 = n - ((n / 10) * 10)  -- n % 10
+        let dc :: u8 = 48 + digit  -- '0' + digit
+        sb = strbuf_putc(sb, dc)
+        n = n / 10
+    end
+    -- Reverse the digits
+    let end_pos :: i64 = sb.len - 1
+    while start < end_pos do
+        let p1 :: ptr<u8> = ptr_add(sb.data, start)
+        let p2 :: ptr<u8> = ptr_add(sb.data, end_pos)
+        let c1 :: i64 = load_i64(p1)
+        let c2 :: i64 = load_i64(p2)
+        store_i64(p1, c2)
+        store_i64(p2, c1)
+        start = start + 1
+        end_pos = end_pos - 1
+    end
+    ret sb
+end
+
+-- Append newline
+fn strbuf_nl(sb :: StringBuf) -> StringBuf do
+    let nl :: u8 = 10  -- '\n'
+    ret strbuf_putc(sb, nl)
+end
+
 -- Codegen state
 struct Codegen do
-    output :: ptr<u8>
-    output_len :: i64
-    output_cap :: i64
+    output :: StringBuf
     temp_counter :: i64
     label_counter :: i64
+    indent :: i64
     had_error :: bool
 end
 
 -- Create new codegen
 fn codegen_new() -> Codegen do
-    let cap :: i64 = 4096
-    let buf :: ptr<u8> = alloc(cap)
-    let cg :: Codegen = Codegen { output = buf, output_len = 0, output_cap = cap, temp_counter = 0, label_counter = 0, had_error = false }
+    let out :: StringBuf = strbuf_new()
+    let cg :: Codegen = Codegen { output = out, temp_counter = 0, label_counter = 0, indent = 0, had_error = false }
     ret cg
 end
 
--- Get next temporary name
-fn codegen_temp(cg :: Codegen) -> i64 do
+-- Get next temp and increment counter - returns (cg, temp_num)
+struct TempResult do
+    cg :: Codegen
+    temp :: i64
+end
+
+fn codegen_next_temp(cg :: Codegen) -> TempResult do
     let t :: i64 = cg.temp_counter
     cg.temp_counter = cg.temp_counter + 1
-    ret t
+    let res :: TempResult = TempResult { cg = cg, temp = t }
+    ret res
 end
 
 -- Get next label
-fn codegen_label(cg :: Codegen) -> i64 do
-    let l :: i64 = cg.label_counter
-    cg.label_counter = cg.label_counter + 1
-    ret l
+struct LabelResult do
+    cg :: Codegen
+    label :: i64
 end
 
--- Emit string to output
+fn codegen_next_label(cg :: Codegen) -> LabelResult do
+    let l :: i64 = cg.label_counter
+    cg.label_counter = cg.label_counter + 1
+    let res :: LabelResult = LabelResult { cg = cg, label = l }
+    ret res
+end
+
+-- Emit raw string
 fn emit(cg :: Codegen, s :: ptr<u8>) -> Codegen do
-    -- Simple append (would need proper buffer management)
+    cg.output = strbuf_puts(cg.output, s)
     ret cg
 end
 
--- Emit LLVM type for null types
-fn emit_type(type_name :: ptr<u8>) -> ptr<u8> do
-    -- Map null types to LLVM types
-    -- i8 -> i8, i16 -> i16, i32 -> i32, i64 -> i64
-    -- u8 -> i8, u16 -> i16, u32 -> i32, u64 -> i64
-    -- f32 -> float, f64 -> double
-    -- bool -> i1
-    -- void -> void
-    -- ptr<T> -> ptr
+-- Emit integer
+fn emit_int(cg :: Codegen, n :: i64) -> Codegen do
+    cg.output = strbuf_puti(cg.output, n)
+    ret cg
+end
+
+-- Emit newline
+fn emit_nl(cg :: Codegen) -> Codegen do
+    cg.output = strbuf_nl(cg.output)
+    ret cg
+end
+
+-- Emit indent (2 spaces per level)
+fn emit_indent(cg :: Codegen) -> Codegen do
+    let i :: i64 = 0
+    while i < cg.indent do
+        cg = emit(cg, "  ")
+        i = i + 1
+    end
+    ret cg
+end
+
+-- Map null type to LLVM type string
+fn type_to_llvm(type_name :: ptr<u8>) -> ptr<u8> do
+    -- Would need string comparison here
+    -- For now, pass through common types
     ret type_name
 end
 
--- Generate LLVM IR for a simple function
-fn codegen_simple_fn(cg :: Codegen, name :: ptr<u8>, ret_type :: ptr<u8>) -> Codegen do
-    -- define i32 @name() {
-    -- entry:
-    --   ret i32 0
-    -- }
+-- === LLVM IR Generation ===
+
+-- Emit module header
+fn emit_module_header(cg :: Codegen) -> Codegen do
+    cg = emit(cg, "; ModuleID = 'null_module'")
+    cg = emit_nl(cg)
+    cg = emit(cg, "target triple = \"x86_64-pc-linux-gnu\"")
+    cg = emit_nl(cg)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit function definition start
+fn emit_fn_start(cg :: Codegen, name :: ptr<u8>, ret_type :: ptr<u8>) -> Codegen do
+    cg = emit(cg, "define ")
+    cg = emit(cg, ret_type)
+    cg = emit(cg, " @")
+    cg = emit(cg, name)
+    cg = emit(cg, "() {")
+    cg = emit_nl(cg)
+    cg = emit(cg, "entry:")
+    cg = emit_nl(cg)
+    cg.indent = 1
+    ret cg
+end
+
+-- Emit function end
+fn emit_fn_end(cg :: Codegen) -> Codegen do
+    cg.indent = 0
+    cg = emit(cg, "}")
+    cg = emit_nl(cg)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit return instruction
+fn emit_ret(cg :: Codegen, ret_type :: ptr<u8>, value :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "ret ")
+    cg = emit(cg, ret_type)
+    cg = emit(cg, " ")
+    cg = emit_int(cg, value)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit ret void
+fn emit_ret_void(cg :: Codegen) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "ret void")
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit alloca instruction
+fn emit_alloca(cg :: Codegen, result_temp :: i64, llvm_type :: ptr<u8>) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result_temp)
+    cg = emit(cg, " = alloca ")
+    cg = emit(cg, llvm_type)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit store instruction
+fn emit_store(cg :: Codegen, llvm_type :: ptr<u8>, value_temp :: i64, ptr_temp :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "store ")
+    cg = emit(cg, llvm_type)
+    cg = emit(cg, " %")
+    cg = emit_int(cg, value_temp)
+    cg = emit(cg, ", ptr %")
+    cg = emit_int(cg, ptr_temp)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit store immediate
+fn emit_store_imm(cg :: Codegen, llvm_type :: ptr<u8>, value :: i64, ptr_temp :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "store ")
+    cg = emit(cg, llvm_type)
+    cg = emit(cg, " ")
+    cg = emit_int(cg, value)
+    cg = emit(cg, ", ptr %")
+    cg = emit_int(cg, ptr_temp)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit load instruction
+fn emit_load(cg :: Codegen, result_temp :: i64, llvm_type :: ptr<u8>, ptr_temp :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result_temp)
+    cg = emit(cg, " = load ")
+    cg = emit(cg, llvm_type)
+    cg = emit(cg, ", ptr %")
+    cg = emit_int(cg, ptr_temp)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit binary operation
+fn emit_binop(cg :: Codegen, result_temp :: i64, op :: ptr<u8>, llvm_type :: ptr<u8>, left_temp :: i64, right_temp :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result_temp)
+    cg = emit(cg, " = ")
+    cg = emit(cg, op)
+    cg = emit(cg, " ")
+    cg = emit(cg, llvm_type)
+    cg = emit(cg, " %")
+    cg = emit_int(cg, left_temp)
+    cg = emit(cg, ", %")
+    cg = emit_int(cg, right_temp)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit comparison
+fn emit_icmp(cg :: Codegen, result_temp :: i64, cmp :: ptr<u8>, llvm_type :: ptr<u8>, left_temp :: i64, right_temp :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result_temp)
+    cg = emit(cg, " = icmp ")
+    cg = emit(cg, cmp)
+    cg = emit(cg, " ")
+    cg = emit(cg, llvm_type)
+    cg = emit(cg, " %")
+    cg = emit_int(cg, left_temp)
+    cg = emit(cg, ", %")
+    cg = emit_int(cg, right_temp)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit conditional branch
+fn emit_br_cond(cg :: Codegen, cond_temp :: i64, true_label :: i64, false_label :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "br i1 %")
+    cg = emit_int(cg, cond_temp)
+    cg = emit(cg, ", label %L")
+    cg = emit_int(cg, true_label)
+    cg = emit(cg, ", label %L")
+    cg = emit_int(cg, false_label)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit unconditional branch
+fn emit_br(cg :: Codegen, label :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "br label %L")
+    cg = emit_int(cg, label)
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit label
+fn emit_label(cg :: Codegen, label :: i64) -> Codegen do
+    cg = emit(cg, "L")
+    cg = emit_int(cg, label)
+    cg = emit(cg, ":")
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit call
+fn emit_call(cg :: Codegen, result_temp :: i64, ret_type :: ptr<u8>, fn_name :: ptr<u8>) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result_temp)
+    cg = emit(cg, " = call ")
+    cg = emit(cg, ret_type)
+    cg = emit(cg, " @")
+    cg = emit(cg, fn_name)
+    cg = emit(cg, "()")
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit call void
+fn emit_call_void(cg :: Codegen, fn_name :: ptr<u8>) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "call void @")
+    cg = emit(cg, fn_name)
+    cg = emit(cg, "()")
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Print the generated output
+fn codegen_print(cg :: Codegen) -> void do
+    let i :: i64 = 0
+    let out :: StringBuf = cg.output
+    let len :: i64 = out.len
+    let data :: ptr<u8> = out.data
+    while i < len do
+        let p :: ptr<u8> = ptr_add(data, i)
+        let c :: i64 = load_i64(p)
+        putchar(c)
+        i = i + 1
+    end
+end
+
+-- === Generate a complete simple program ===
+
+fn generate_hello_world(cg :: Codegen) -> Codegen do
+    -- Generate: fn main() -> i32 do ret 0 end
+    cg = emit_module_header(cg)
+    cg = emit_fn_start(cg, "main", "i32")
+    cg = emit_ret(cg, "i32", 0)
+    cg = emit_fn_end(cg)
     ret cg
 end
 
@@ -82,24 +413,40 @@ fn codegen_test() -> i32 do
     end
     println()
 
-    -- Test 2: Initial temp counter
-    print("Test 2: Initial temp counter")
+    -- Test 2: String buffer append
+    print("Test 2: String buffer")
     println()
-    if cg.temp_counter == 0 do
-        print("  OK (temp_counter=0)")
+    let sb :: StringBuf = strbuf_new()
+    sb = strbuf_puts(sb, "hello")
+    if sb.len == 5 do
+        print("  OK (len=5)")
+    else do
+        print("  ERROR len=")
+        print_int(sb.len)
+    end
+    println()
+
+    -- Test 3: Emit and print
+    print("Test 3: Emit test")
+    println()
+    cg = emit(cg, "test string")
+    let out :: StringBuf = cg.output
+    let outlen :: i64 = out.len
+    if outlen > 0 do
+        print("  OK (output has content)")
     else do
         print("  ERROR")
     end
     println()
 
-    -- Test 3: Initial label counter
-    print("Test 3: Initial label counter")
+    -- Test 4: Generate simple program
+    print("Test 4: Generate program")
     println()
-    if cg.label_counter == 0 do
-        print("  OK (label_counter=0)")
-    else do
-        print("  ERROR")
-    end
+    let cg2 :: Codegen = codegen_new()
+    cg2 = generate_hello_world(cg2)
+    print("  Generated IR:")
+    println()
+    codegen_print(cg2)
     println()
 
     println()
@@ -108,6 +455,6 @@ fn codegen_test() -> i32 do
     ret 0
 end
 
-fn main() -> i32 do
+fn codegen_main() -> i32 do
     ret codegen_test()
 end
