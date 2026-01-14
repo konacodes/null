@@ -16,9 +16,11 @@
 4. **All language tests pass** ✓ - 13/13 tests passing
 
 ### Key Files:
-- `nullc/mini.null` - Self-hosted compiler (2900+ lines) with CLI support
+- `nullc/src/main.null` - Self-hosted compiler entry point (per prompt.md spec)
+- `nullc/mini.null` - Self-hosted compiler source (2900+ lines) with CLI support
 - `src/codegen.c` - C compiler with argc/argv support for main
-- `nullc_bin` - C-compiled self-hosted compiler
+- `std/map.null` - Hash map implementation (213 lines)
+- `nullc_compiler` - C-compiled self-hosted compiler
 - `nullc2` - Self-compiled self-hosted compiler (bootstrapped!)
 
 ### Final Fixes for M7:
