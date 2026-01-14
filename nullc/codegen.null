@@ -46,6 +46,15 @@ fn load_byte(p :: ptr<u8>) -> u8 do
     ret b
 end
 
+-- Store byte to memory (preserving other bytes)
+fn store_byte(p :: ptr<u8>, b :: u8) -> void do
+    let old :: i64 = load_i64(p)
+    let cleared :: i64 = (old / 256) * 256  -- clear low byte
+    let bv :: i64 = b  -- convert u8 to i64
+    let new_val :: i64 = cleared + bv
+    store_i64(p, new_val)
+end
+
 -- Append string to buffer
 fn strbuf_puts(sb :: StringBuf, s :: ptr<u8>) -> StringBuf do
     let i :: i64 = 0
@@ -80,15 +89,15 @@ fn strbuf_puti(sb :: StringBuf, n :: i64) -> StringBuf do
         sb = strbuf_putc(sb, dc)
         n = n / 10
     end
-    -- Reverse the digits
+    -- Reverse the digits using byte operations
     let end_pos :: i64 = sb.len - 1
     while start < end_pos do
         let p1 :: ptr<u8> = ptr_add(sb.data, start)
         let p2 :: ptr<u8> = ptr_add(sb.data, end_pos)
-        let c1 :: i64 = load_i64(p1)
-        let c2 :: i64 = load_i64(p2)
-        store_i64(p1, c2)
-        store_i64(p2, c1)
+        let c1 :: u8 = load_byte(p1)
+        let c2 :: u8 = load_byte(p2)
+        store_byte(p1, c2)
+        store_byte(p2, c1)
         start = start + 1
         end_pos = end_pos - 1
     end
