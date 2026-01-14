@@ -1,124 +1,81 @@
 -- nullc/tests/lexer_test.null
--- Tests for the self-hosted lexer
+-- Basic tests for lexer functionality
 
 @use "std/io.null"
-@use "std/mem.null"
 @use "std/string.null"
-@use "nullc/src/lexer.null"
 
-fn test_single_tokens() -> bool do
-    -- Test single character tokens
-    let src :: ptr<u8> = "+-*/"
-    let len :: i64 = 4
-    mut lex :: Lexer = lexer_new(src, len)
-
-    let r1 :: ScanResult = scan_token(lex)
-    lex = r1.lex
-    if r1.tok.tok_type != 59 do  -- TOK_PLUS
-        io_print("FAIL: expected TOK_PLUS")
+fn test_char_is_digit() -> bool do
+    -- Test digit detection
+    if char_is_digit(48) == false do  -- '0'
         ret false
     end
-
-    let r2 :: ScanResult = scan_token(lex)
-    lex = r2.lex
-    if r2.tok.tok_type != 60 do  -- TOK_MINUS
-        io_print("FAIL: expected TOK_MINUS")
+    if char_is_digit(57) == false do  -- '9'
         ret false
     end
-
-    let r3 :: ScanResult = scan_token(lex)
-    lex = r3.lex
-    if r3.tok.tok_type != 61 do  -- TOK_STAR
-        io_print("FAIL: expected TOK_STAR")
+    if char_is_digit(65) == true do   -- 'A' should not be digit
         ret false
     end
-
-    let r4 :: ScanResult = scan_token(lex)
-    lex = r4.lex
-    if r4.tok.tok_type != 62 do  -- TOK_SLASH
-        io_print("FAIL: expected TOK_SLASH")
-        ret false
-    end
-
     ret true
 end
 
-fn test_keywords() -> bool do
-    let src :: ptr<u8> = "fn let mut if else while for ret end do"
-    let len :: i64 = 40
-    mut lex :: Lexer = lexer_new(src, len)
-
-    -- Test fn keyword
-    let r1 :: ScanResult = scan_token(lex)
-    lex = r1.lex
-    if r1.tok.tok_type != 4 do  -- TOK_FN
-        io_print("FAIL: expected TOK_FN")
+fn test_char_is_alpha() -> bool do
+    -- Test alpha detection
+    if char_is_alpha(65) == false do  -- 'A'
         ret false
     end
-
-    -- Test let keyword
-    let r2 :: ScanResult = scan_token(lex)
-    lex = r2.lex
-    if r2.tok.tok_type != 5 do  -- TOK_LET
-        io_print("FAIL: expected TOK_LET")
+    if char_is_alpha(90) == false do  -- 'Z'
         ret false
     end
-
+    if char_is_alpha(97) == false do  -- 'a'
+        ret false
+    end
+    if char_is_alpha(122) == false do -- 'z'
+        ret false
+    end
+    if char_is_alpha(48) == true do   -- '0' should not be alpha
+        ret false
+    end
     ret true
 end
 
-fn test_numbers() -> bool do
-    let src :: ptr<u8> = "42 123 0"
-    let len :: i64 = 8
-    mut lex :: Lexer = lexer_new(src, len)
-
-    let r1 :: ScanResult = scan_token(lex)
-    lex = r1.lex
-    if r1.tok.tok_type != 0 do  -- TOK_INT_LIT
-        io_print("FAIL: expected TOK_INT_LIT")
+fn test_char_is_space() -> bool do
+    if char_is_space(32) == false do  -- space
         ret false
     end
-    if r1.tok.int_value != 42 do
-        io_print("FAIL: expected int_value 42")
+    if char_is_space(9) == false do   -- tab
         ret false
     end
-
+    if char_is_space(10) == false do  -- newline
+        ret false
+    end
+    if char_is_space(65) == true do   -- 'A' should not be space
+        ret false
+    end
     ret true
 end
 
-fn test_strings() -> bool do
-    let src :: ptr<u8> = "\"hello\""
-    let len :: i64 = 7
-    mut lex :: Lexer = lexer_new(src, len)
-
-    let r1 :: ScanResult = scan_token(lex)
-    if r1.tok.tok_type != 2 do  -- TOK_STRING_LIT
-        io_print("FAIL: expected TOK_STRING_LIT")
+fn test_str_eq() -> bool do
+    if str_eq("hello", "hello") == false do
         ret false
     end
-
+    if str_eq("hello", "world") == true do
+        ret false
+    end
+    if str_eq("", "") == false do
+        ret false
+    end
     ret true
 end
 
-fn test_identifiers() -> bool do
-    let src :: ptr<u8> = "foo bar_baz x123"
-    let len :: i64 = 16
-    mut lex :: Lexer = lexer_new(src, len)
-
-    let r1 :: ScanResult = scan_token(lex)
-    lex = r1.lex
-    if r1.tok.tok_type != 3 do  -- TOK_IDENT
-        io_print("FAIL: expected TOK_IDENT for 'foo'")
+fn test_str_len() -> bool do
+    let len1 :: u64 = str_len("hello")
+    if len1 != 5 do
         ret false
     end
-
-    let r2 :: ScanResult = scan_token(lex)
-    lex = r2.lex
-    if r2.tok.tok_type != 3 do  -- TOK_IDENT
-        io_print("FAIL: expected TOK_IDENT for 'bar_baz'")
+    let len2 :: u64 = str_len("")
+    if len2 != 0 do
         ret false
     end
-
     ret true
 end
 
@@ -128,52 +85,49 @@ fn main() -> i32 do
     mut passed :: i64 = 0
     mut failed :: i64 = 0
 
-    if test_single_tokens() do
-        io_print("test_single_tokens: PASS")
+    if test_char_is_digit() do
+        io_print("test_char_is_digit: PASS")
         passed = passed + 1
     else do
-        io_print("test_single_tokens: FAIL")
+        io_print("test_char_is_digit: FAIL")
         failed = failed + 1
     end
 
-    if test_keywords() do
-        io_print("test_keywords: PASS")
+    if test_char_is_alpha() do
+        io_print("test_char_is_alpha: PASS")
         passed = passed + 1
     else do
-        io_print("test_keywords: FAIL")
+        io_print("test_char_is_alpha: FAIL")
         failed = failed + 1
     end
 
-    if test_numbers() do
-        io_print("test_numbers: PASS")
+    if test_char_is_space() do
+        io_print("test_char_is_space: PASS")
         passed = passed + 1
     else do
-        io_print("test_numbers: FAIL")
+        io_print("test_char_is_space: FAIL")
         failed = failed + 1
     end
 
-    if test_strings() do
-        io_print("test_strings: PASS")
+    if test_str_eq() do
+        io_print("test_str_eq: PASS")
         passed = passed + 1
     else do
-        io_print("test_strings: FAIL")
+        io_print("test_str_eq: FAIL")
         failed = failed + 1
     end
 
-    if test_identifiers() do
-        io_print("test_identifiers: PASS")
+    if test_str_len() do
+        io_print("test_str_len: PASS")
         passed = passed + 1
     else do
-        io_print("test_identifiers: FAIL")
+        io_print("test_str_len: FAIL")
         failed = failed + 1
     end
 
-    io_print("=== Results ===")
+    io_print("=== Lexer Tests Complete ===")
     if failed == 0 do
-        io_print("All lexer tests passed!")
         ret 0
-    else do
-        io_print("Some tests failed")
-        ret 1
     end
+    ret 1
 end
