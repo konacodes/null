@@ -243,7 +243,32 @@ fn emit_expr_val(cg :: Codegen, expr :: ptr<u8>) -> ExprResult do
         if call_has_string_arg(expr) do
             cg = emit_call_with_str(cg, "puts", 0)
         else do
-            cg = emit_call_void(cg, name)
+            -- Get call arguments (data at 104, count at 112)
+            let args_data :: ptr<u8> = load_ptr(ptr_add(expr, 104))
+            let args_count :: i64 = load_i64(ptr_add(expr, 112))
+
+            if args_count > 0 do
+                -- Get first argument
+                let arg0 :: ptr<u8> = load_ptr(args_data)
+                let arg0_kind :: i64 = load_i64(arg0)
+
+                -- Check if arg is a literal int (NODE_LITERAL_INT = 16)
+                if arg0_kind == 16 do
+                    let arg_val :: i64 = load_i64(ptr_add(arg0, 24))
+                    cg = emit_call_i64_1imm(cg, name, arg_val)
+                else do
+                    -- Evaluate argument expression
+                    let arg_res :: ExprResult = emit_expr_val(cg, arg0)
+                    cg = arg_res.cg
+                    cg = emit_call_i64_1arg(cg, name, arg_res.temp)
+                end
+
+                let call_result :: i64 = get_last_temp(cg)
+                let res :: ExprResult = ExprResult { cg = cg, temp = call_result }
+                ret res
+            else do
+                cg = emit_call_void(cg, name)
+            end
         end
     end
 
@@ -340,6 +365,28 @@ fn emit_var_decl(cg :: Codegen, stmt :: ptr<u8>) -> Codegen do
     ret cg
 end
 
+-- Check if a block ends with a return statement
+fn block_ends_with_return(block :: ptr<u8>) -> bool do
+    let null_ptr :: ptr<u8> = 0
+    if block == null_ptr do
+        ret false
+    end
+    let stmts_data :: ptr<u8> = load_ptr(ptr_add(block, 176))
+    let stmts_count :: i64 = load_i64(ptr_add(block, 184))
+    if stmts_count == 0 do
+        ret false
+    end
+    -- Check last statement
+    let last_idx :: i64 = stmts_count - 1
+    let last_stmt :: ptr<u8> = load_ptr(ptr_add(stmts_data, last_idx * 8))
+    let kind :: i64 = load_i64(last_stmt)
+    -- NODE_RETURN = 9
+    if kind == 9 do
+        ret true
+    end
+    ret false
+end
+
 -- Emit block statements (helper for if/while bodies)
 fn emit_block(cg :: Codegen, block :: ptr<u8>) -> Codegen do
     let null_ptr :: ptr<u8> = 0
@@ -391,13 +438,19 @@ fn emit_if_stmt(cg :: Codegen, stmt :: ptr<u8>) -> Codegen do
     -- Emit then block
     cg = emit_label(cg, then_label)
     cg = emit_block(cg, then_branch)
-    cg = emit_br(cg, end_label)
+    -- Only branch if block doesn't end with return
+    if block_ends_with_return(then_branch) == false do
+        cg = emit_br(cg, end_label)
+    end
 
     -- Emit else block if present
     if else_branch != null_ptr do
         cg = emit_label(cg, else_label)
         cg = emit_block(cg, else_branch)
-        cg = emit_br(cg, end_label)
+        -- Only branch if block doesn't end with return
+        if block_ends_with_return(else_branch) == false do
+            cg = emit_br(cg, end_label)
+        end
     end
 
     -- Emit end label
@@ -508,6 +561,29 @@ fn emit_body(cg :: Codegen, body :: ptr<u8>) -> Codegen do
     ret cg
 end
 
+-- Emit parameter declarations at function start
+fn emit_params(cg :: Codegen, params_data :: ptr<u8>, params_count :: i64) -> Codegen do
+    let i :: i64 = 0
+    while i < params_count do
+        let param :: ptr<u8> = load_ptr(ptr_add(params_data, i * 8))
+        let param_name :: ptr<u8> = load_ptr(ptr_add(param, 56))
+
+        -- Allocate stack space for this parameter
+        let temp :: i64 = next_temp(cg)
+        cg = inc_temp(cg)
+        cg = emit_alloca(cg, temp, "i64")
+
+        -- Store parameter value into alloca
+        cg = emit_store_param(cg, i, temp)
+
+        -- Add to symbol table
+        cg = symtab_add(cg, param_name, temp)
+
+        i = i + 1
+    end
+    ret cg
+end
+
 -- Helper to emit a single function declaration
 -- This workaround avoids the C compiler bug with load_ptr inside while loops
 fn emit_fn_decl(cg :: Codegen, decl :: ptr<u8>) -> Codegen do
@@ -516,7 +592,28 @@ fn emit_fn_decl(cg :: Codegen, decl :: ptr<u8>) -> Codegen do
 
     -- Get function name from node (offset 56)
     let name :: ptr<u8> = load_ptr(ptr_add(decl, 56))
-    cg = emit_fn_start(cg, name, "i32")
+
+    -- Get parameters (params.data at 128, params.count at 136)
+    let fn_params_data :: ptr<u8> = load_ptr(ptr_add(decl, 128))
+    let fn_params_count :: i64 = load_i64(ptr_add(decl, 136))
+
+    -- Emit function start with parameters
+    if fn_params_count > 0 do
+        cg = emit_fn_start_params(cg, name, "i32", fn_params_count)
+        -- Emit each parameter in signature
+        let i :: i64 = 0
+        while i < fn_params_count do
+            let is_last :: bool = i == fn_params_count - 1
+            cg = emit_fn_param(cg, i, is_last)
+            i = i + 1
+        end
+        cg = emit_fn_params_end(cg)
+        -- Emit parameter allocas and stores
+        cg = emit_params(cg, fn_params_data, fn_params_count)
+    else do
+        cg = emit_fn_start(cg, name, "i32")
+    end
+
     -- Get body (offset 120) and emit statements
     let body :: ptr<u8> = load_ptr(ptr_add(decl, 120))
     cg = emit_body(cg, body)

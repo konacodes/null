@@ -204,8 +204,10 @@ fn emit_module_header(cg :: Codegen) -> Codegen do
     ret cg
 end
 
--- Emit function definition start
+-- Emit function definition start (no parameters)
 fn emit_fn_start(cg :: Codegen, name :: ptr<u8>, ret_type :: ptr<u8>) -> Codegen do
+    cg.temp_counter = 0
+    cg.label_counter = 0
     cg = emit(cg, "define ")
     cg = emit(cg, ret_type)
     cg = emit(cg, " @")
@@ -215,6 +217,50 @@ fn emit_fn_start(cg :: Codegen, name :: ptr<u8>, ret_type :: ptr<u8>) -> Codegen
     cg = emit(cg, "entry:")
     cg = emit_nl(cg)
     cg.indent = 1
+    ret cg
+end
+
+-- Emit function definition start with parameters
+fn emit_fn_start_params(cg :: Codegen, name :: ptr<u8>, ret_type :: ptr<u8>, param_count :: i64) -> Codegen do
+    cg.temp_counter = 0
+    cg.label_counter = 0
+    cg = emit(cg, "define ")
+    cg = emit(cg, ret_type)
+    cg = emit(cg, " @")
+    cg = emit(cg, name)
+    cg = emit(cg, "(")
+    -- Parameters will be emitted by caller
+    ret cg
+end
+
+-- Emit a function parameter in signature
+fn emit_fn_param(cg :: Codegen, param_idx :: i64, is_last :: bool) -> Codegen do
+    cg = emit(cg, "i64 %arg")
+    cg = emit_int(cg, param_idx)
+    if is_last == false do
+        cg = emit(cg, ", ")
+    end
+    ret cg
+end
+
+-- Emit function signature closing and entry label
+fn emit_fn_params_end(cg :: Codegen) -> Codegen do
+    cg = emit(cg, ") {")
+    cg = emit_nl(cg)
+    cg = emit(cg, "entry:")
+    cg = emit_nl(cg)
+    cg.indent = 1
+    ret cg
+end
+
+-- Emit store from named parameter to alloca
+fn emit_store_param(cg :: Codegen, param_idx :: i64, dest_temp :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "store i64 %arg")
+    cg = emit_int(cg, param_idx)
+    cg = emit(cg, ", ptr %")
+    cg = emit_int(cg, dest_temp)
+    cg = emit_nl(cg)
     ret cg
 end
 
@@ -472,6 +518,43 @@ fn emit_call_with_str(cg :: Codegen, fn_name :: ptr<u8>, str_id :: i64) -> Codeg
     cg = emit(cg, ", i32 0, i32 0))")
     cg = emit_nl(cg)
     ret cg
+end
+
+-- Emit call with i64 return and one i64 argument (temp)
+fn emit_call_i64_1arg(cg :: Codegen, fn_name :: ptr<u8>, arg_temp :: i64) -> Codegen do
+    let result :: i64 = cg.temp_counter
+    cg.temp_counter = cg.temp_counter + 1
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result)
+    cg = emit(cg, " = call i64 @")
+    cg = emit(cg, fn_name)
+    cg = emit(cg, "(i64 %")
+    cg = emit_int(cg, arg_temp)
+    cg = emit(cg, ")")
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit call with i64 return and one i64 immediate argument
+fn emit_call_i64_1imm(cg :: Codegen, fn_name :: ptr<u8>, arg_val :: i64) -> Codegen do
+    let result :: i64 = cg.temp_counter
+    cg.temp_counter = cg.temp_counter + 1
+    cg = emit_indent(cg)
+    cg = emit(cg, "%")
+    cg = emit_int(cg, result)
+    cg = emit(cg, " = call i64 @")
+    cg = emit(cg, fn_name)
+    cg = emit(cg, "(i64 ")
+    cg = emit_int(cg, arg_val)
+    cg = emit(cg, ")")
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Get the last allocated temp (result of previous call)
+fn get_last_temp(cg :: Codegen) -> i64 do
+    ret cg.temp_counter - 1
 end
 
 -- Print the generated output

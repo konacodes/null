@@ -1169,9 +1169,15 @@ fn parse_fn_decl(p :: Parser) -> ParseResult do
     -- Expect (
     p = consume(p, TokenType::TOK_LPAREN, "Expected '(' after function name")
 
-    -- Skip parameters for now (skip until closing paren)
-    let skip :: ParseResult = skip_until_rparen(p)
-    p = skip.p
+    -- Parse parameters
+    let params_result :: MoreArgsResult = parse_params(p)
+    p = params_result.p
+    let fn_params :: NodeArray = params_result.args
+
+    -- Store params in node (params.data at 128, params.count at 136)
+    let np :: ptr<u8> = node
+    store_ptr(ptr_add(np, 128), fn_params.data)
+    store_i64(ptr_add(np, 136), fn_params.count)
 
     -- Expect )
     p = consume(p, TokenType::TOK_RPAREN, "Expected ')' after parameters")
@@ -1190,7 +1196,6 @@ fn parse_fn_decl(p :: Parser) -> ParseResult do
     p = body.p
 
     -- Store body in node
-    let np :: ptr<u8> = node
     let body_dest :: ptr<u8> = ptr_add(np, 120)
     store_ptr(body_dest, body.node)
 
@@ -1201,7 +1206,62 @@ fn parse_fn_decl(p :: Parser) -> ParseResult do
     ret res
 end
 
--- Helper to skip until )
+-- Parse a single parameter: name :: type
+fn parse_param(p :: Parser) -> ParseResult do
+    let cur :: Token = p.current
+    if cur.tok_type != TokenType::TOK_IDENT do
+        let null_node :: ptr<ASTNode> = 0
+        let res :: ParseResult = ParseResult { p = p, node = null_node }
+        ret res
+    end
+    let param :: ptr<ASTNode> = make_node(NodeKind::NODE_PARAM, cur.line, cur.column)
+    node_set_name(param, token_text(cur))
+    p = parser_advance(p)
+    p = consume(p, TokenType::TOK_COLONCOLON, "Expected :: after parameter name")
+    p = skip_type(p)
+    let res :: ParseResult = ParseResult { p = p, node = param }
+    ret res
+end
+
+-- Parse more parameters separated by comma
+fn parse_more_params(p :: Parser, param_list :: NodeArray) -> MoreArgsResult do
+    let tok :: Token = p.current
+    if tok.tok_type == TokenType::TOK_COMMA do
+        p = parser_advance(p)
+        let param :: ParseResult = parse_param(p)
+        p = param.p
+        let null_check :: ptr<ASTNode> = 0
+        if param.node != null_check do
+            param_list = node_array_push(param_list, param.node)
+        end
+        ret parse_more_params(p, param_list)
+    end
+    let res :: MoreArgsResult = MoreArgsResult { p = p, args = param_list }
+    ret res
+end
+
+-- Parse function parameters: (name :: type, ...)
+fn parse_params(p :: Parser) -> MoreArgsResult do
+    let param_list :: NodeArray = node_array_new()
+    let cur :: Token = p.current
+    if cur.tok_type == TokenType::TOK_RPAREN do
+        -- Empty parameter list
+        let res :: MoreArgsResult = MoreArgsResult { p = p, args = param_list }
+        ret res
+    end
+    -- Parse first parameter
+    let first :: ParseResult = parse_param(p)
+    p = first.p
+    let null_check :: ptr<ASTNode> = 0
+    if first.node != null_check do
+        param_list = node_array_push(param_list, first.node)
+    end
+    -- Parse more parameters
+    let more :: MoreArgsResult = parse_more_params(p, param_list)
+    ret more
+end
+
+-- Helper to skip until ) (kept for backwards compat)
 fn skip_until_rparen(p :: Parser) -> ParseResult do
     let cur :: Token = p.current
     if cur.tok_type != TokenType::TOK_RPAREN do
