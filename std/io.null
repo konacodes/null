@@ -1,0 +1,36 @@
+-- std/io.null
+-- Standard I/O operations for null
+
+@extern "C" do
+    fn puts(s :: ptr<u8>) -> i32
+    fn printf(fmt :: ptr<u8>) -> i32
+    fn putchar(c :: i32) -> i32
+    fn getchar() -> i32
+end
+
+-- Print a string followed by newline
+fn print(s :: ptr<u8>) -> void do
+    puts(s)
+end
+
+-- Print a string without newline
+fn print_raw(s :: ptr<u8>) -> void do
+    printf(s)
+end
+
+-- Print an integer
+fn print_int(n :: i64) -> void do
+    -- Simple integer printing via printf
+    -- In a full implementation, we'd format this properly
+    printf("%lld")
+end
+
+-- Print a newline
+fn println() -> void do
+    putchar(10)
+end
+
+-- Read a character from stdin
+fn read_char() -> i32 do
+    ret getchar()
+end

@@ -1,0 +1,84 @@
+-- tests/lang/comparison.null
+-- Test comparison and logical operators
+
+fn main() -> i32 do
+    -- Test equality
+    let a :: i64 = 5
+    let b :: i64 = 5
+    let c :: i64 = 10
+
+    if a != b do
+        ret 1
+    end
+
+    if a == c do
+        ret 2
+    end
+
+    -- Test less than
+    if a < b do
+        ret 3
+    end
+
+    if c < a do
+        ret 4
+    end
+
+    -- Test greater than
+    if a > c do
+        ret 5
+    end
+
+    if c > a do
+        -- This is expected
+    else do
+        ret 6
+    end
+
+    -- Test less than or equal
+    if a <= b do
+        -- Expected: 5 <= 5
+    else do
+        ret 7
+    end
+
+    if c <= a do
+        ret 8
+    end
+
+    -- Test greater than or equal
+    if a >= b do
+        -- Expected: 5 >= 5
+    else do
+        ret 9
+    end
+
+    if a >= c do
+        ret 10
+    end
+
+    -- Test not equal
+    if a != c do
+        -- Expected
+    else do
+        ret 11
+    end
+
+    -- Test chained comparisons
+    let x :: i64 = 3
+    let y :: i64 = 5
+    let z :: i64 = 7
+
+    if x < y do
+        if y < z do
+            -- x < y < z, expected
+        else do
+            ret 12
+        end
+    else do
+        ret 13
+    end
+
+    io_print("comparison: PASS")
+    ret 0
+end

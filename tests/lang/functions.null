@@ -1,0 +1,43 @@
+-- tests/lang/functions.null
+-- Test function definitions and calls
+
+fn add(a :: i64, b :: i64) -> i64 do
+    ret a + b
+end
+
+fn multiply(x :: i64, y :: i64) -> i64 do
+    ret x * y
+end
+
+fn square(n :: i64) -> i64 do
+    ret multiply(n, n)
+end
+
+fn main() -> i32 do
+    -- Test simple function call
+    let result :: i64 = add(3, 4)
+    if result != 7 do
+        ret 1
+    end
+
+    -- Test another function
+    let prod :: i64 = multiply(6, 7)
+    if prod != 42 do
+        ret 2
+    end
+
+    -- Test nested function calls
+    let sq :: i64 = square(5)
+    if sq != 25 do
+        ret 3
+    end
+
+    -- Test complex expression with function calls
+    let complex :: i64 = add(multiply(2, 3), 4)
+    if complex != 10 do
+        ret 4
+    end
+
+    io_print("functions: PASS")
+    ret 0
+end

@@ -1,0 +1,60 @@
+-- tests/lang/loops.null
+-- Test while and for loops
+
+fn factorial(n :: i64) -> i64 do
+    mut result :: i64 = 1
+    mut i :: i64 = 1
+    while i <= n do
+        result = result * i
+        i = i + 1
+    end
+    ret result
+end
+
+fn sum_to(n :: i64) -> i64 do
+    mut total :: i64 = 0
+    for i in 0..n do
+        total = total + i
+    end
+    ret total
+end
+
+fn main() -> i32 do
+    -- Test while loop with factorial
+    let f5 :: i64 = factorial(5)
+    if f5 != 120 do
+        ret 1
+    end
+
+    let f1 :: i64 = factorial(1)
+    if f1 != 1 do
+        ret 2
+    end
+
+    -- Test for loop
+    let s10 :: i64 = sum_to(10)
+    -- 0+1+2+3+4+5+6+7+8+9 = 45
+    if s10 != 45 do
+        ret 3
+    end
+
+    let s5 :: i64 = sum_to(5)
+    -- 0+1+2+3+4 = 10
+    if s5 != 10 do
+        ret 4
+    end
+
+    -- Test while with counter
+    mut count :: i64 = 0
+    mut x :: i64 = 100
+    while x > 0 do
+        x = x - 10
+        count = count + 1
+    end
+    if count != 10 do
+        ret 5
+    end
+
+    io_print("loops: PASS")
+    ret 0
+end

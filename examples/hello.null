@@ -1,0 +1,9 @@
+-- examples/hello.null
+-- The classic Hello World program in null
+
+@use "std/io"
+
+fn main() -> i32 do
+    io_print("Hello, world!")
+    ret 0
+end

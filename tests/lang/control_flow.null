@@ -1,0 +1,71 @@
+-- tests/lang/control_flow.null
+-- Test if/elif/else control flow
+
+fn abs(n :: i64) -> i64 do
+    if n < 0 do
+        ret 0 - n
+    end
+    ret n
+end
+
+fn classify(n :: i64) -> i64 do
+    if n > 0 do
+        ret 1
+    elif n < 0 do
+        ret 0 - 1
+    else do
+        ret 0
+    end
+end
+
+fn main() -> i32 do
+    -- Test simple if
+    mut x :: i64 = 5
+    if x > 0 do
+        x = x + 1
+    end
+    if x != 6 do
+        ret 1
+    end
+
+    -- Test if-else
+    mut y :: i64 = 0
+    if x > 10 do
+        y = 100
+    else do
+        y = 50
+    end
+    if y != 50 do
+        ret 2
+    end
+
+    -- Test elif
+    let c1 :: i64 = classify(10)
+    if c1 != 1 do
+        ret 3
+    end
+
+    let c2 :: i64 = classify(0 - 5)
+    if c2 != 0 - 1 do
+        ret 4
+    end
+
+    let c3 :: i64 = classify(0)
+    if c3 != 0 do
+        ret 5
+    end
+
+    -- Test abs function
+    let a1 :: i64 = abs(5)
+    if a1 != 5 do
+        ret 6
+    end
+
+    let a2 :: i64 = abs(0 - 7)
+    if a2 != 7 do
+        ret 7
+    end
+
+    io_print("control_flow: PASS")
+    ret 0
+end

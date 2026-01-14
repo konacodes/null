@@ -1,0 +1,57 @@
+-- tests/lang/variables.null
+-- Test variable declarations and assignments
+
+fn main() -> i32 do
+    -- Test immutable variables
+    let a :: i64 = 42
+    if a != 42 do
+        ret 1
+    end
+
+    -- Test mutable variables
+    mut b :: i64 = 10
+    b = b + 5
+    if b != 15 do
+        ret 2
+    end
+
+    b = b * 2
+    if b != 30 do
+        ret 3
+    end
+
+    -- Test variable shadowing (new scope)
+    let c :: i64 = 100
+    if c != 100 do
+        ret 4
+    end
+
+    -- Test type inference (inferred as i64)
+    let d = 999
+    if d != 999 do
+        ret 5
+    end
+
+    -- Test multiple variables
+    let x :: i64 = 1
+    let y :: i64 = 2
+    let z :: i64 = 3
+    let sum :: i64 = x + y + z
+    if sum != 6 do
+        ret 6
+    end
+
+    -- Test boolean variables
+    let flag :: bool = true
+    if flag != true do
+        ret 7
+    end
+
+    let flag2 :: bool = false
+    if flag2 != false do
+        ret 8
+    end
+
+    io_print("variables: PASS")
+    ret 0
+end

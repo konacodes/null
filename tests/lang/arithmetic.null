@@ -1,0 +1,40 @@
+-- tests/lang/arithmetic.null
+-- Test basic arithmetic operations
+
+fn main() -> i32 do
+    let a :: i64 = 10
+    let b :: i64 = 5
+
+    -- Addition
+    let sum :: i64 = a + b
+    if sum != 15 do
+        ret 1
+    end
+
+    -- Subtraction
+    let diff :: i64 = a - b
+    if diff != 5 do
+        ret 2
+    end
+
+    -- Multiplication
+    let prod :: i64 = a * b
+    if prod != 50 do
+        ret 3
+    end
+
+    -- Division
+    let quot :: i64 = a / b
+    if quot != 2 do
+        ret 4
+    end
+
+    -- Modulo
+    let rem :: i64 = 17 % 5
+    if rem != 2 do
+        ret 5
+    end
+
+    io_print("arithmetic: PASS")
+    ret 0
+end
