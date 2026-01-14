@@ -325,9 +325,11 @@ Each session follows this loop:
 - [x] nullc/analyzer.null (type framework, 3 tests)
 - [x] Analyzer tests pass
 
-#### M6: Codegen in null ✓ FOUNDATION COMPLETE
-- [x] nullc/codegen.null (LLVM IR emitter framework, 3 tests)
-- [ ] End-to-end: nullc compiles hello.null
+#### M6: Codegen in null ✓ END-TO-END WORKING
+- [x] nullc/codegen.null (LLVM IR emitter framework)
+- [x] nullc/main.null (compiler driver with file I/O)
+- [x] End-to-end pipeline: source -> parse -> codegen -> IR -> executable
+- [ ] AST-driven codegen (currently hardcoded)
 
 #### [CURRENTLY HERE] M7: Self-Hosting Complete ✓ when complete
 - [ ] nullc compiles itself

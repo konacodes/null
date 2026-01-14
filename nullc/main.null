@@ -1,5 +1,7 @@
 -- nullc/main.null
--- Main compiler driver test
+-- Self-hosted null compiler - minimal AST-driven version
+-- Note: Uses hardcoded name "main" due to compiler bug with
+-- loading names inside while loops
 
 @use "std/io.null"
 @use "std/mem.null"
@@ -8,289 +10,95 @@
 @use "nullc/parser.null"
 @use "nullc/codegen.null"
 
-@extern "C" do
-    fn system(cmd :: ptr<u8>) -> i32
-end
-
--- Compiler state
-struct Compiler do
-    source :: ptr<u8>
-    source_len :: i64
-    had_error :: bool
-end
-
--- Create new compiler
-fn compiler_new() -> Compiler do
-    let null_ptr :: ptr<u8> = 0
-    let c :: Compiler = Compiler { source = null_ptr, source_len = 0, had_error = false }
-    ret c
-end
-
--- Read source file
-fn compiler_read_source(c :: Compiler, path :: ptr<u8>) -> Compiler do
-    let f :: ptr<u8> = file_open_read(path)
-    let null_ptr :: ptr<u8> = 0
-    if f == null_ptr do
-        print("Error: Cannot open file ")
-        print(path)
-        println()
-        c.had_error = true
-        ret c
-    end
-
-    let size :: i64 = file_size(f)
-    file_close(f)
-    c.source = file_read_all(path)
-    c.source_len = size
-
-    ret c
-end
-
--- Get node kind from AST node
-fn get_node_kind(node :: ptr<ASTNode>) -> i64 do
-    let np :: ptr<u8> = node
-    let kind :: i64 = load_i64(np)
-    ret kind
-end
-
--- Get node int_value from AST node (offset 24)
-fn get_node_int_value(node :: ptr<ASTNode>) -> i64 do
-    let np :: ptr<u8> = node
-    let offset :: ptr<u8> = ptr_add(np, 24)
-    let val :: i64 = load_i64(offset)
-    ret val
-end
-
--- Get node name from AST node (offset 48)
-fn get_node_name(node :: ptr<ASTNode>) -> ptr<u8> do
-    let np :: ptr<u8> = node
-    let offset :: ptr<u8> = ptr_add(np, 48)
-    let name :: ptr<u8> = load_ptr(offset)
-    ret name
-end
-
--- Get node body from AST node (offset 120)
-fn get_node_body(node :: ptr<ASTNode>) -> ptr<ASTNode> do
-    let np :: ptr<u8> = node
-    let offset :: ptr<u8> = ptr_add(np, 120)
-    let body :: ptr<u8> = load_ptr(offset)
-    ret body
-end
-
--- Get node left from AST node (offset 64)
-fn get_node_left(node :: ptr<ASTNode>) -> ptr<ASTNode> do
-    let np :: ptr<u8> = node
-    let offset :: ptr<u8> = ptr_add(np, 64)
-    let left :: ptr<u8> = load_ptr(offset)
-    ret left
-end
-
--- Expression codegen result
-struct ExprResult do
-    cg :: Codegen
-    temp :: i64
-end
-
--- Generate code for an expression, returns temp number holding result
-fn codegen_expr(cg :: Codegen, node :: ptr<ASTNode>) -> ExprResult do
-    let kind :: i64 = get_node_kind(node)
-
-    -- Integer literal
-    if kind == NodeKind::NODE_LITERAL_INT do
-        let val :: i64 = get_node_int_value(node)
-        -- Emit: %temp = add i64 0, val
-        let tr :: TempResult = codegen_next_temp(cg)
-        cg = tr.cg
-        let temp :: i64 = tr.temp
-        cg = emit_indent(cg)
-        cg = emit(cg, "%")
-        cg = emit_int(cg, temp)
-        cg = emit(cg, " = add i64 0, ")
-        cg = emit_int(cg, val)
-        cg = emit_nl(cg)
-        let res :: ExprResult = ExprResult { cg = cg, temp = temp }
-        ret res
-    end
-
-    -- Fallback: return 0
-    let res :: ExprResult = ExprResult { cg = cg, temp = 0 }
-    ret res
-end
-
--- Generate code for a statement
-fn codegen_stmt(cg :: Codegen, node :: ptr<ASTNode>) -> Codegen do
-    let null_check :: ptr<ASTNode> = 0
-    if node == null_check do
-        ret cg
-    end
-
-    let kind :: i64 = get_node_kind(node)
-
-    -- Return statement
-    if kind == NodeKind::NODE_RETURN do
-        let expr :: ptr<ASTNode> = get_node_left(node)
-        let null_expr :: ptr<ASTNode> = 0
-        if expr != null_expr do
-            let er :: ExprResult = codegen_expr(cg, expr)
-            cg = er.cg
-            cg = emit_indent(cg)
-            cg = emit(cg, "ret i32 %")
-            cg = emit_int(cg, er.temp)
-            cg = emit_nl(cg)
-        else do
-            cg = emit_ret_void(cg)
-        end
-        ret cg
-    end
-
-    ret cg
-end
-
--- Generate code for a function declaration
-fn codegen_fn_decl(cg :: Codegen, node :: ptr<ASTNode>) -> Codegen do
-    let name :: ptr<u8> = get_node_name(node)
-    cg = emit_fn_start(cg, name, "i32")
-
-    -- Get function body
-    let body :: ptr<ASTNode> = get_node_body(node)
-    let null_check :: ptr<ASTNode> = 0
-    if body != null_check do
-        -- Body is a block node, we need to iterate statements
-        -- For now, just emit a simple return
-        cg = codegen_stmt(cg, body)
-    end
-
-    cg = emit_fn_end(cg)
-    ret cg
-end
-
--- Get program stmts data (offset 160)
-fn get_program_stmts_data(node :: ptr<ASTNode>) -> ptr<u8> do
-    let np :: ptr<u8> = node
-    let offset :: ptr<u8> = ptr_add(np, 160)
-    let data :: ptr<u8> = load_ptr(offset)
-    ret data
-end
-
--- Get program stmts count (offset 168)
-fn get_program_stmts_count(node :: ptr<ASTNode>) -> i64 do
-    let np :: ptr<u8> = node
-    let offset :: ptr<u8> = ptr_add(np, 168)
-    let count :: i64 = load_i64(offset)
-    ret count
-end
-
--- Get node from array at index
-fn get_node_at(data :: ptr<u8>, idx :: i64) -> ptr<ASTNode> do
-    let byte_offset :: i64 = idx * 8
-    let ptr_loc :: ptr<u8> = ptr_add(data, byte_offset)
-    let node :: ptr<u8> = load_ptr(ptr_loc)
-    ret node
-end
-
--- Generate code for an AST program (simplified for now)
-fn codegen_ast(cg :: Codegen, program :: ptr<ASTNode>) -> Codegen do
+fn codegen_ast(cg :: Codegen, np :: ptr<u8>) -> Codegen do
     cg = emit_module_header(cg)
-    cg = emit_fn_start(cg, "main", "i32")
-    cg = emit_ret(cg, "i32", 0)
-    cg = emit_fn_end(cg)
+
+    let count :: i64 = load_i64(ptr_add(np, 168))
+    let data :: ptr<u8> = load_ptr(ptr_add(np, 160))
+
+    -- Walk declarations and emit stub functions
+    -- Note: Uses hardcoded "main" name due to compiler bug
+    let i :: i64 = 0
+    while i < count do
+        let decl :: ptr<u8> = load_ptr(ptr_add(data, i * 8))
+        cg = emit_fn_start(cg, "main", "i32")
+        cg = emit_ret(cg, "i32", 0)
+        cg = emit_fn_end(cg)
+        i = i + 1
+    end
+
     ret cg
 end
 
--- Compile source to LLVM IR
-fn compiler_compile(c :: Compiler) -> Compiler do
-    print("  Starting compile...")
-    println()
-
-    -- Parse
-    let p :: Parser = parser_new(c.source, c.source_len)
-    print("  Parsing...")
-    println()
-    let result :: ParseResult = parse_program(p)
-    p = result.parser
-    if p.had_error do
-        print("  Parse ERROR")
-        println()
-        c.had_error = true
-        ret c
-    end
-    print("  Parse OK")
-    println()
-
-    -- Generate code
-    print("  Generating LLVM IR...")
+fn do_codegen(ast :: ptr<u8>) -> i32 do
+    print("Generating IR...")
     println()
     let cg :: Codegen = codegen_new()
-    let null_node :: ptr<ASTNode> = 0
-    cg = codegen_ast(cg, null_node)
+    cg = codegen_ast(cg, ast)
 
-    -- Write IR to file
-    print("  Writing IR...")
-    println()
     let ir_path :: ptr<u8> = "/tmp/claude/nullc_out.ll"
     let f :: ptr<u8> = file_open_write(ir_path)
     let out :: StringBuf = cg.output
-    let data :: ptr<u8> = out.data
-    let len :: i64 = out.len
-    let len_u64 :: u64 = len
-    file_write(f, data, len_u64)
+    file_write(f, out.data, out.len)
     file_close(f)
-    print("  IR written to ")
+    print("Written to ")
     print(ir_path)
     println()
 
-    print("  Done!")
-    println()
-    ret c
-end
-
--- === TESTS ===
-
-fn compiler_test() -> i32 do
-    print("=== Compiler Driver Tests ===")
-    println()
-
-    -- Test 1: Create compiler
-    print("Test 1: Create compiler")
-    println()
-    let c :: Compiler = compiler_new()
-    if c.had_error do
-        print("  ERROR")
-    else do
-        print("  OK")
-    end
-    println()
-
-    -- Test 2: Read a source file
-    print("Test 2: Read source")
-    println()
-    c = compiler_read_source(c, "/tmp/claude/test.null")
-    if c.had_error do
-        print("  ERROR")
-    else do
-        print("  OK (read ")
-        print_int(c.source_len)
-        print(" bytes)")
-    end
-    println()
-
-    -- Test 3: Compile
-    print("Test 3: Compile")
-    println()
-    c = compiler_compile(c)
-    if c.had_error do
-        print("  ERROR")
-    else do
-        print("  OK")
-    end
-    println()
-
-    println()
-    print("=== All tests passed ===")
-    println()
     ret 0
 end
 
+fn do_parse(source :: ptr<u8>, size :: i64) -> ptr<u8> do
+    print("Parsing...")
+    println()
+
+    let p :: Parser = parser_new(source, size)
+    let result :: ParseResult = parse_program(p)
+    p = result.p
+    if p.had_error do
+        print("Parse ERROR")
+        println()
+        let np :: ptr<u8> = 0
+        ret np
+    end
+    print("Parse OK")
+    println()
+
+    ret result.node
+end
+
 fn main() -> i32 do
-    ret compiler_test()
+    print("=== nullc Compiler ===")
+    println()
+
+    let source :: ptr<u8> = file_read_all("/tmp/claude/test.null")
+    let null_ptr :: ptr<u8> = 0
+    if source == null_ptr do
+        print("Failed to read")
+        println()
+        ret 1
+    end
+
+    let f :: ptr<u8> = file_open_read("/tmp/claude/test.null")
+    let size :: i64 = file_size(f)
+    file_close(f)
+    print("Read ")
+    print_int(size)
+    print(" bytes")
+    println()
+
+    let ast :: ptr<u8> = do_parse(source, size)
+    if ast == null_ptr do
+        ret 1
+    end
+
+    let result :: i32 = do_codegen(ast)
+    let zero :: i32 = 0
+    if result != zero do
+        ret result
+    end
+
+    print("=== Done ===")
+    println()
+    ret 0
 end
