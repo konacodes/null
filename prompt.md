@@ -317,13 +317,12 @@ Each session follows this loop:
 - [x] nullc/src/lexer.null (full lexer)
 - [x] Lexer tests pass
 
-#### [CURRENTLY HERE] M4: Parser in null ✓ when complete
-- [ ] nullc/src/types.null (ASTNode, NodeKind)
-- [ ] nullc/src/parser.null (full parser)
-- [ ] Parser tests pass
+#### M4: Parser in null ✓ COMPLETE
+- [x] nullc/parser.null (1500+ lines, 12 tests passing)
+- [x] Parser tests pass
 
-#### M5: Analyzer in null ✓ when complete
-- [ ] nullc/src/analyzer.null (type checking)
+#### [CURRENTLY HERE] M5: Analyzer in null ✓ when complete
+- [ ] nullc/analyzer.null (type checking)
 - [ ] Analyzer tests pass
 
 #### M6: Codegen in null ✓ when complete
