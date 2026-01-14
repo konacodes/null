@@ -165,4 +165,4 @@ null follows a **minimal kernel** design:
 
 ## License
 
-Built with Claude Code for the Claudeathon.
+MIT
