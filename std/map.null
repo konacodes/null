@@ -1,0 +1,213 @@
+-- std/map.null
+-- Hash map implementation for null
+-- Uses string keys and i64 values (MapStrI64)
+-- Note: No generics, so we provide concrete type implementations
+
+@use "std/mem.null"
+@use "std/string.null"
+
+-- Map entry structure
+struct MapEntry do
+    key :: ptr<u8>       -- string key (null if empty)
+    value :: i64         -- value
+    hash :: u64          -- cached hash value
+    next :: ptr<u8>      -- next entry in chain (for collision handling)
+end
+
+-- Map structure using separate chaining
+struct Map do
+    buckets :: ptr<u8>   -- array of bucket pointers (ptr to MapEntry)
+    num_buckets :: u64   -- number of buckets
+    size :: u64          -- number of entries
+end
+
+-- Simple hash function for strings (djb2)
+fn str_hash(s :: ptr<u8>) -> u64 do
+    let hash :: u64 = 5381
+    let i :: u64 = 0
+    let len :: u64 = strlen(s)
+    while i < len do
+        let c :: u64 = s[i]
+        -- hash = hash * 33 + c
+        hash = ((hash << 5) + hash) + c
+        i = i + 1
+    end
+    ret hash
+end
+
+-- Create a new map with default bucket count
+fn map_new() -> Map do
+    let num_buckets :: u64 = 16
+    let bucket_size :: u64 = 8  -- pointer size
+    let data :: ptr<u8> = alloc_zeroed(num_buckets * bucket_size)
+    let zero :: u64 = 0
+    let m :: Map = Map { buckets = data, num_buckets = num_buckets, size = zero }
+    ret m
+end
+
+-- Create a new map with specified bucket count
+fn map_new_sized(num_buckets :: u64) -> Map do
+    let bucket_size :: u64 = 8
+    let data :: ptr<u8> = alloc_zeroed(num_buckets * bucket_size)
+    let zero :: u64 = 0
+    let m :: Map = Map { buckets = data, num_buckets = num_buckets, size = zero }
+    ret m
+end
+
+-- Free map memory
+fn map_free(m :: Map) -> void do
+    let null_ptr :: ptr<u8> = 0
+    -- Free all entries
+    mut i :: u64 = 0
+    while i < m.num_buckets do
+        let bucket_ptr :: ptr<u8> = ptr_add(m.buckets, i * 8)
+        mut entry_ptr :: ptr<u8> = load_ptr(bucket_ptr)
+        -- Free chain of entries
+        while entry_ptr != null_ptr do
+            let next :: ptr<u8> = load_ptr(ptr_add(entry_ptr, 24))  -- offset of next
+            dealloc(entry_ptr)
+            entry_ptr = next
+        end
+        i = i + 1
+    end
+    dealloc(m.buckets)
+end
+
+-- Set a key-value pair in the map (returns modified map)
+fn map_set(m :: Map, key :: ptr<u8>, value :: i64) -> Map do
+    let null_ptr :: ptr<u8> = 0
+    let buckets :: ptr<u8> = m.buckets
+    let num_buckets :: u64 = m.num_buckets
+
+    -- Calculate bucket index
+    let hash :: u64 = str_hash(key)
+    let idx :: u64 = hash % num_buckets
+
+    -- Get bucket pointer
+    let bucket_ptr :: ptr<u8> = ptr_add(buckets, idx * 8)
+    let entry_ptr :: ptr<u8> = load_ptr(bucket_ptr)
+
+    -- Search for existing key
+    mut current :: ptr<u8> = entry_ptr
+    while current != null_ptr do
+        let entry_key :: ptr<u8> = load_ptr(current)
+        if str_eq(entry_key, key) do
+            -- Key exists, update value
+            store_i64(ptr_add(current, 8), value)
+            ret m
+        end
+        current = load_ptr(ptr_add(current, 24))
+    end
+
+    -- Key not found, create new entry
+    let entry_size :: u64 = 32  -- key(8) + value(8) + hash(8) + next(8)
+    let new_entry :: ptr<u8> = alloc(entry_size)
+    let key_copy :: ptr<u8> = str_dup(key)
+    store_ptr(new_entry, key_copy)           -- key
+    store_i64(ptr_add(new_entry, 8), value)  -- value
+    store_i64(ptr_add(new_entry, 16), hash)  -- hash
+    store_ptr(ptr_add(new_entry, 24), entry_ptr)  -- next = old head
+
+    -- Update bucket to point to new entry
+    store_ptr(bucket_ptr, new_entry)
+
+    -- Update size and return
+    m.size = m.size + 1
+    ret m
+end
+
+-- Get a value from the map (returns 0 if not found)
+fn map_get(m :: Map, key :: ptr<u8>) -> i64 do
+    let null_ptr :: ptr<u8> = 0
+    let hash :: u64 = str_hash(key)
+    let idx :: u64 = hash % m.num_buckets
+
+    let bucket_ptr :: ptr<u8> = ptr_add(m.buckets, idx * 8)
+    mut entry_ptr :: ptr<u8> = load_ptr(bucket_ptr)
+
+    while entry_ptr != null_ptr do
+        let entry_key :: ptr<u8> = load_ptr(entry_ptr)
+        if str_eq(entry_key, key) do
+            ret load_i64(ptr_add(entry_ptr, 8))
+        end
+        entry_ptr = load_ptr(ptr_add(entry_ptr, 24))
+    end
+
+    ret 0  -- not found
+end
+
+-- Check if map contains a key
+fn map_has(m :: Map, key :: ptr<u8>) -> bool do
+    let null_ptr :: ptr<u8> = 0
+    let hash :: u64 = str_hash(key)
+    let idx :: u64 = hash % m.num_buckets
+
+    let bucket_ptr :: ptr<u8> = ptr_add(m.buckets, idx * 8)
+    mut entry_ptr :: ptr<u8> = load_ptr(bucket_ptr)
+
+    while entry_ptr != null_ptr do
+        let entry_key :: ptr<u8> = load_ptr(entry_ptr)
+        if str_eq(entry_key, key) do
+            ret true
+        end
+        entry_ptr = load_ptr(ptr_add(entry_ptr, 24))
+    end
+
+    ret false
+end
+
+-- Get the number of entries in the map
+fn map_size(m :: Map) -> u64 do
+    ret m.size
+end
+
+-- Check if map is empty
+fn map_is_empty(m :: Map) -> bool do
+    let zero :: u64 = 0
+    ret m.size == zero
+end
+
+-- Remove a key from the map (returns modified map and bool indicating if found)
+struct MapRemoveResult do
+    m :: Map
+    found :: bool
+end
+
+fn map_remove(m :: Map, key :: ptr<u8>) -> MapRemoveResult do
+    let null_ptr :: ptr<u8> = 0
+    let buckets :: ptr<u8> = m.buckets
+    let num_buckets :: u64 = m.num_buckets
+
+    let hash :: u64 = str_hash(key)
+    let idx :: u64 = hash % num_buckets
+
+    let bucket_ptr :: ptr<u8> = ptr_add(buckets, idx * 8)
+    mut entry_ptr :: ptr<u8> = load_ptr(bucket_ptr)
+    mut prev :: ptr<u8> = null_ptr
+
+    while entry_ptr != null_ptr do
+        let entry_key :: ptr<u8> = load_ptr(entry_ptr)
+        if str_eq(entry_key, key) do
+            let next :: ptr<u8> = load_ptr(ptr_add(entry_ptr, 24))
+            if prev == null_ptr do
+                -- First in chain
+                store_ptr(bucket_ptr, next)
+            else do
+                -- Middle or end of chain
+                store_ptr(ptr_add(prev, 24), next)
+            end
+            -- Free key and entry
+            dealloc(entry_key)
+            dealloc(entry_ptr)
+            -- Update size
+            m.size = m.size - 1
+            let result :: MapRemoveResult = MapRemoveResult { m = m, found = true }
+            ret result
+        end
+        prev = entry_ptr
+        entry_ptr = load_ptr(ptr_add(entry_ptr, 24))
+    end
+
+    let result :: MapRemoveResult = MapRemoveResult { m = m, found = false }
+    ret result
+end
