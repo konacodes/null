@@ -16,6 +16,9 @@
     fn fseek(f :: ptr<u8>, offset :: i64, whence :: i32) -> i32
     fn ftell(f :: ptr<u8>) -> i64
     fn fflush(f :: ptr<u8>) -> i32
+    fn system(cmd :: ptr<u8>) -> i64
+    fn get_argc() -> i64
+    fn get_argv(idx :: i64) -> ptr<u8>
 end
 
 -- Memory allocation
@@ -1863,11 +1866,82 @@ fn cg_expr(cg :: ptr<u8>, node :: ptr<u8>) -> i64 do
             i = i + 1
         end
 
-        -- Emit call
+        -- Determine if function returns pointer or integer
+        -- Known pointer-returning functions
+        let is_ptr_fn :: i64 = 0
+        if my_str_eq(name, "malloc") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "memset") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "memcpy") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "fopen") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "get_argv") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "alloc") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "mem_zero") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "mem_copy") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "file_read_all") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "file_open_write") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "buf_new") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "buf_get_data") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "lexer_new") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "parser_new") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "parse_program") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "cg_new") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "cg_buf") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_name") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_body") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_left") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_right") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_cond") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_then_branch") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_else_branch") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_args_data") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_params_data") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_stmts_data") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_str") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "node_get_init") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "lex_peek_id") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "lex_peek_str") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "ptr_add") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "load_ptr") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "build_cmd3") == 1 do is_ptr_fn = 1 end
+        if my_str_eq(name, "build_cmd5") == 1 do is_ptr_fn = 1 end
+
+        -- Known i64/u64 returning functions (no sext needed)
+        let is_i64_fn :: i64 = 0
+        if my_str_eq(name, "get_argc") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "ftell") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "fread") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "fwrite") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "system") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "my_str_len") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "my_str_eq") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "buf_get_len") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "load_i64") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "node_kind") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "node_get_int") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "node_get_args_count") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "node_get_params_count") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "node_get_stmts_count") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "lex_peek") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "lex_peek_int") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "cg_temp") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "cg_sym_lookup") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "cg_add_string") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "arr_len") == 1 do is_i64_fn = 1 end
+        if my_str_eq(name, "arr_get") == 1 do is_i64_fn = 1 end
+
+        -- Emit call with appropriate return type
         let t :: i64 = cg_temp(cg)
         cg_emit(cg, "  %")
         cg_emit_int(cg, t)
-        cg_emit(cg, " = call i32 @")
+        if is_ptr_fn == 1 do
+            cg_emit(cg, " = call ptr @")
+        else do
+            if is_i64_fn == 1 do
+                cg_emit(cg, " = call i64 @")
+            else do
+                cg_emit(cg, " = call i32 @")
+            end
+        end
         cg_emit(cg, name)
         cg_emit(cg, "(")
         i = 0
@@ -1888,7 +1962,23 @@ fn cg_expr(cg :: ptr<u8>, node :: ptr<u8>) -> i64 do
         cg_emit(cg, ")")
         cg_nl(cg)
 
-        -- Sign extend result
+        -- Handle return value conversion
+        if is_ptr_fn == 1 do
+            -- Convert pointer to i64 for uniform handling
+            let t2 :: i64 = cg_temp(cg)
+            cg_emit(cg, "  %")
+            cg_emit_int(cg, t2)
+            cg_emit(cg, " = ptrtoint ptr %")
+            cg_emit_int(cg, t)
+            cg_emit(cg, " to i64")
+            cg_nl(cg)
+            ret t2
+        end
+        if is_i64_fn == 1 do
+            -- Already i64, no conversion needed
+            ret t
+        end
+        -- i32 return: sign extend to i64
         let t2 :: i64 = cg_temp(cg)
         cg_emit(cg, "  %")
         cg_emit_int(cg, t2)
@@ -2237,40 +2327,57 @@ fn cg_fn(cg :: ptr<u8>, node :: ptr<u8>) -> void do
     let params_count :: i64 = node_get_params_count(node)
     let body :: ptr<u8> = node_get_body(node)
 
+    -- Special case: main function gets argc/argv
+    let is_main :: i64 = my_str_eq(name, "main")
+
     cg_emit(cg, "define i32 @")
     cg_emit(cg, name)
-    cg_emit(cg, "(")
-    let i :: i64 = 0
-    while i < params_count do
-        if i > 0 do
-            cg_emit(cg, ", ")
+    if is_main == 1 do
+        cg_emit(cg, "(i32 %argc, i8** %argv) {")
+    else do
+        cg_emit(cg, "(")
+        let i :: i64 = 0
+        while i < params_count do
+            if i > 0 do
+                cg_emit(cg, ", ")
+            end
+            cg_emit(cg, "i64 %arg")
+            cg_emit_int(cg, i)
+            i = i + 1
         end
-        cg_emit(cg, "i64 %arg")
-        cg_emit_int(cg, i)
-        i = i + 1
+        cg_emit(cg, ") {")
     end
-    cg_emit(cg, ") {")
     cg_nl(cg)
     cg_emit(cg, "entry:")
     cg_nl(cg)
 
-    -- Allocate and store parameters
-    i = 0
-    while i < params_count do
-        let param :: ptr<u8> = load_ptr(ptr_add(params_data, i * 8))
-        let param_name :: ptr<u8> = node_get_name(param)
-        let t :: i64 = cg_temp(cg)
-        cg_emit(cg, "  %")
-        cg_emit_int(cg, t)
-        cg_emit(cg, " = alloca i64")
+    -- For main: store argc/argv in globals for access
+    if is_main == 1 do
+        cg_emit(cg, "  store i32 %argc, ptr @__nullc_argc")
         cg_nl(cg)
-        cg_emit(cg, "  store i64 %arg")
-        cg_emit_int(cg, i)
-        cg_emit(cg, ", ptr %")
-        cg_emit_int(cg, t)
+        cg_emit(cg, "  store i8** %argv, ptr @__nullc_argv")
         cg_nl(cg)
-        cg_sym_add(cg, param_name, t)
-        i = i + 1
+    end
+
+    -- Allocate and store parameters (skip for main since it uses argc/argv differently)
+    if is_main == 0 do
+        let i :: i64 = 0
+        while i < params_count do
+            let param :: ptr<u8> = load_ptr(ptr_add(params_data, i * 8))
+            let param_name :: ptr<u8> = node_get_name(param)
+            let t :: i64 = cg_temp(cg)
+            cg_emit(cg, "  %")
+            cg_emit_int(cg, t)
+            cg_emit(cg, " = alloca i64")
+            cg_nl(cg)
+            cg_emit(cg, "  store i64 %arg")
+            cg_emit_int(cg, i)
+            cg_emit(cg, ", ptr %")
+            cg_emit_int(cg, t)
+            cg_nl(cg)
+            cg_sym_add(cg, param_name, t)
+            i = i + 1
+        end
     end
 
     -- Pre-allocate all variables in entry block
@@ -2372,6 +2479,39 @@ fn cg_program(cg :: ptr<u8>, prog :: ptr<u8>) -> void do
     cg_nl(cg)
     cg_emit(cg, "declare i32 @fflush(i8*)")
     cg_nl(cg)
+    cg_emit(cg, "declare i64 @system(i8*)")
+    cg_nl(cg)
+    cg_nl(cg)
+    -- Global variables for argc/argv access
+    cg_emit(cg, "@__nullc_argc = global i32 0")
+    cg_nl(cg)
+    cg_emit(cg, "@__nullc_argv = global i8** null")
+    cg_nl(cg)
+    cg_nl(cg)
+    -- Helper functions for argc/argv access
+    cg_emit(cg, "define i64 @get_argc() {")
+    cg_nl(cg)
+    cg_emit(cg, "  %1 = load i32, ptr @__nullc_argc")
+    cg_nl(cg)
+    cg_emit(cg, "  %2 = sext i32 %1 to i64")
+    cg_nl(cg)
+    cg_emit(cg, "  ret i64 %2")
+    cg_nl(cg)
+    cg_emit(cg, "}")
+    cg_nl(cg)
+    cg_nl(cg)
+    cg_emit(cg, "define i8* @get_argv(i64 %idx) {")
+    cg_nl(cg)
+    cg_emit(cg, "  %1 = load i8**, ptr @__nullc_argv")
+    cg_nl(cg)
+    cg_emit(cg, "  %2 = getelementptr i8*, i8** %1, i64 %idx")
+    cg_nl(cg)
+    cg_emit(cg, "  %3 = load i8*, i8** %2")
+    cg_nl(cg)
+    cg_emit(cg, "  ret i8* %3")
+    cg_nl(cg)
+    cg_emit(cg, "}")
+    cg_nl(cg)
     cg_nl(cg)
 
     -- Emit functions first (they'll reference strings)
@@ -2391,23 +2531,138 @@ end
 -- ============================================================================
 -- Main entry point
 -- ============================================================================
+
+-- Build a command string by concatenating parts
+fn build_cmd3(a :: ptr<u8>, b :: ptr<u8>, c :: ptr<u8>) -> ptr<u8> do
+    let len_a :: i64 = my_str_len(a)
+    let len_b :: i64 = my_str_len(b)
+    let len_c :: i64 = my_str_len(c)
+    let total :: i64 = len_a + len_b + len_c + 1
+    let result :: ptr<u8> = alloc(total)
+    let i :: i64 = 0
+    let j :: i64 = 0
+    while j < len_a do
+        store_byte(ptr_add(result, i), load_byte(ptr_add(a, j)))
+        i = i + 1
+        j = j + 1
+    end
+    j = 0
+    while j < len_b do
+        store_byte(ptr_add(result, i), load_byte(ptr_add(b, j)))
+        i = i + 1
+        j = j + 1
+    end
+    j = 0
+    while j < len_c do
+        store_byte(ptr_add(result, i), load_byte(ptr_add(c, j)))
+        i = i + 1
+        j = j + 1
+    end
+    store_byte(ptr_add(result, i), 0)
+    ret result
+end
+
+fn build_cmd5(a :: ptr<u8>, b :: ptr<u8>, c :: ptr<u8>, d :: ptr<u8>, e :: ptr<u8>) -> ptr<u8> do
+    let len_a :: i64 = my_str_len(a)
+    let len_b :: i64 = my_str_len(b)
+    let len_c :: i64 = my_str_len(c)
+    let len_d :: i64 = my_str_len(d)
+    let len_e :: i64 = my_str_len(e)
+    let total :: i64 = len_a + len_b + len_c + len_d + len_e + 1
+    let result :: ptr<u8> = alloc(total)
+    let i :: i64 = 0
+    let j :: i64 = 0
+    while j < len_a do
+        store_byte(ptr_add(result, i), load_byte(ptr_add(a, j)))
+        i = i + 1
+        j = j + 1
+    end
+    j = 0
+    while j < len_b do
+        store_byte(ptr_add(result, i), load_byte(ptr_add(b, j)))
+        i = i + 1
+        j = j + 1
+    end
+    j = 0
+    while j < len_c do
+        store_byte(ptr_add(result, i), load_byte(ptr_add(c, j)))
+        i = i + 1
+        j = j + 1
+    end
+    j = 0
+    while j < len_d do
+        store_byte(ptr_add(result, i), load_byte(ptr_add(d, j)))
+        i = i + 1
+        j = j + 1
+    end
+    j = 0
+    while j < len_e do
+        store_byte(ptr_add(result, i), load_byte(ptr_add(e, j)))
+        i = i + 1
+        j = j + 1
+    end
+    store_byte(ptr_add(result, i), 0)
+    ret result
+end
+
 fn main() -> i32 do
-    let src :: ptr<u8> = file_read_all("/tmp/claude/aaa.null")
+    let argc :: i64 = get_argc()
+
+    -- Check for correct usage: nullc input.null -o output
+    if argc < 4 do
+        puts("Usage: nullc <input.null> -o <output>")
+        ret 1
+    end
+
+    let input_file :: ptr<u8> = get_argv(1)
+    let dash_o :: ptr<u8> = get_argv(2)
+    let output_file :: ptr<u8> = get_argv(3)
+
+    -- Verify -o flag
+    let check :: i64 = my_str_eq(dash_o, "-o")
+    if check == 0 do
+        puts("Usage: nullc <input.null> -o <output>")
+        ret 1
+    end
+
+    -- Read input file
+    let src :: ptr<u8> = file_read_all(input_file)
     let null_ptr :: ptr<u8> = 0
     if src == null_ptr do
         puts("Error: could not read input file")
         ret 1
     end
+
+    -- Parse and generate code
     let src_len :: i64 = my_str_len(src)
     let lex :: ptr<u8> = lexer_new(src, src_len)
     let parser :: ptr<u8> = parser_new(lex)
     let prog :: ptr<u8> = parse_program(parser)
     let cg :: ptr<u8> = cg_new()
     cg_program(cg, prog)
+
+    -- Write LLVM IR to temp file
     let out_buf :: ptr<u8> = cg_buf(cg)
     let out_data :: ptr<u8> = buf_get_data(out_buf)
     let out_len :: i64 = buf_get_len(out_buf)
-    let result :: i32 = my_file_write_all("/tmp/claude/mini_out.ll", out_data, out_len)
+    let result :: i32 = my_file_write_all("/tmp/nullc_temp.ll", out_data, out_len)
+
+    -- Run llc to compile IR to object file
+    let llc_cmd :: ptr<u8> = "llc -filetype=obj /tmp/nullc_temp.ll -o /tmp/nullc_temp.o"
+    let llc_ret :: i64 = system(llc_cmd)
+    if llc_ret != 0 do
+        puts("Error: llc failed")
+        ret 1
+    end
+
+    -- Run gcc to link and produce executable
+    let gcc_cmd :: ptr<u8> = build_cmd3("gcc -no-pie /tmp/nullc_temp.o -o ", output_file, " -lm")
+    let gcc_ret :: i64 = system(gcc_cmd)
+    if gcc_ret != 0 do
+        puts("Error: gcc failed")
+        ret 1
+    end
+
     ret 0
 end
 

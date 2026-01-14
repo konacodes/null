@@ -277,9 +277,11 @@ static LLVMTypeRef type_to_llvm(Codegen *cg, Type *type) {
 
 static void codegen_fn_decl(Codegen *cg, ASTNode *node) {
     bool uses_sret = type_needs_sret(node->fn_decl.ret_type);
+    bool is_main = strcmp(node->fn_decl.name, "main") == 0;
 
     // Build function type
     // If returning struct, use sret convention: void return, hidden first param is ptr to return value
+    // If main function, add argc/argv parameters
     LLVMTypeRef ret_type;
     int total_params;
     LLVMTypeRef *param_types;
@@ -293,6 +295,13 @@ static void codegen_fn_decl(Codegen *cg, ASTNode *node) {
         for (int i = 0; i < node->fn_decl.param_count; i++) {
             param_types[i + 1] = type_to_llvm(cg, node->fn_decl.params[i]->param.param_type);
         }
+    } else if (is_main) {
+        // Main gets special handling: i32 @main(i32 %argc, i8** %argv)
+        ret_type = LLVMInt32TypeInContext(cg->context);
+        total_params = 2;  // argc and argv
+        param_types = malloc(sizeof(LLVMTypeRef) * 2);
+        param_types[0] = LLVMInt32TypeInContext(cg->context);  // argc: i32
+        param_types[1] = LLVMPointerTypeInContext(cg->context, 0);  // argv: i8**
     } else {
         ret_type = type_to_llvm(cg, node->fn_decl.ret_type);
         total_params = node->fn_decl.param_count;
@@ -344,7 +353,19 @@ static void codegen_fn_decl(Codegen *cg, ASTNode *node) {
         cg->current_fn_sret = NULL;
     }
 
+    // For main: store argc/argv in globals
+    if (is_main) {
+        LLVMValueRef argc_param = LLVMGetParam(fn, 0);
+        LLVMValueRef argv_param = LLVMGetParam(fn, 1);
+        LLVMSetValueName2(argc_param, "argc", 4);
+        LLVMSetValueName2(argv_param, "argv", 4);
+        // Store into globals
+        LLVMBuildStore(cg->builder, argc_param, cg->argc_global);
+        LLVMBuildStore(cg->builder, argv_param, cg->argv_global);
+    }
+
     // Add parameters to scope (offset by 1 if sret)
+    // Note: for main, the user-visible parameters are different from actual argc/argv
     int param_offset = uses_sret ? 1 : 0;
     for (int i = 0; i < node->fn_decl.param_count; i++) {
         LLVMValueRef param_val = LLVMGetParam(fn, i + param_offset);
@@ -1284,6 +1305,45 @@ bool codegen_generate(Codegen *cg, ASTNode *ast) {
         return false;
     }
 
+    // Emit argc/argv globals and helper functions for CLI support
+    LLVMTypeRef i32_type = LLVMInt32TypeInContext(cg->context);
+    LLVMTypeRef i64_type = LLVMInt64TypeInContext(cg->context);
+    LLVMTypeRef i8_ptr_type = LLVMPointerTypeInContext(cg->context, 0);
+    LLVMTypeRef i8_ptr_ptr_type = LLVMPointerTypeInContext(cg->context, 0);
+
+    // Global: @__nullc_argc = global i32 0
+    LLVMValueRef argc_global = LLVMAddGlobal(cg->module, i32_type, "__nullc_argc");
+    LLVMSetInitializer(argc_global, LLVMConstInt(i32_type, 0, 0));
+
+    // Global: @__nullc_argv = global i8** null
+    LLVMValueRef argv_global = LLVMAddGlobal(cg->module, i8_ptr_ptr_type, "__nullc_argv");
+    LLVMSetInitializer(argv_global, LLVMConstNull(i8_ptr_ptr_type));
+
+    // Helper function: get_argc() -> i64
+    LLVMTypeRef get_argc_type = LLVMFunctionType(i64_type, NULL, 0, 0);
+    LLVMValueRef get_argc_fn = LLVMAddFunction(cg->module, "get_argc", get_argc_type);
+    LLVMBasicBlockRef get_argc_entry = LLVMAppendBasicBlockInContext(cg->context, get_argc_fn, "entry");
+    LLVMPositionBuilderAtEnd(cg->builder, get_argc_entry);
+    LLVMValueRef argc_val = LLVMBuildLoad2(cg->builder, i32_type, argc_global, "argc");
+    LLVMValueRef argc_ext = LLVMBuildSExt(cg->builder, argc_val, i64_type, "argc_ext");
+    LLVMBuildRet(cg->builder, argc_ext);
+
+    // Helper function: get_argv(i64) -> i8*
+    LLVMTypeRef get_argv_param_types[] = { i64_type };
+    LLVMTypeRef get_argv_type = LLVMFunctionType(i8_ptr_type, get_argv_param_types, 1, 0);
+    LLVMValueRef get_argv_fn = LLVMAddFunction(cg->module, "get_argv", get_argv_type);
+    LLVMBasicBlockRef get_argv_entry = LLVMAppendBasicBlockInContext(cg->context, get_argv_fn, "entry");
+    LLVMPositionBuilderAtEnd(cg->builder, get_argv_entry);
+    LLVMValueRef idx = LLVMGetParam(get_argv_fn, 0);
+    LLVMValueRef argv_ptr = LLVMBuildLoad2(cg->builder, i8_ptr_ptr_type, argv_global, "argv");
+    LLVMValueRef elem_ptr = LLVMBuildGEP2(cg->builder, i8_ptr_type, argv_ptr, &idx, 1, "elem_ptr");
+    LLVMValueRef elem = LLVMBuildLoad2(cg->builder, i8_ptr_type, elem_ptr, "elem");
+    LLVMBuildRet(cg->builder, elem);
+
+    // Store refs for use when generating main
+    cg->argc_global = argc_global;
+    cg->argv_global = argv_global;
+
     // First pass: declare all structs
     for (int i = 0; i < ast->program.decl_count; i++) {
         ASTNode *decl = ast->program.decls[i];
@@ -1306,6 +1366,7 @@ bool codegen_generate(Codegen *cg, ASTNode *ast) {
         if (decl->kind == NODE_FN_DECL) {
             // Just declare, don't generate body yet
             bool uses_sret = type_needs_sret(decl->fn_decl.ret_type);
+            bool is_main_fn = strcmp(decl->fn_decl.name, "main") == 0;
             LLVMTypeRef ret_type;
             int total_params;
             LLVMTypeRef *param_types;
@@ -1318,6 +1379,13 @@ bool codegen_generate(Codegen *cg, ASTNode *ast) {
                 for (int j = 0; j < decl->fn_decl.param_count; j++) {
                     param_types[j + 1] = type_to_llvm(cg, decl->fn_decl.params[j]->param.param_type);
                 }
+            } else if (is_main_fn) {
+                // Main gets special handling: i32 @main(i32 %argc, i8** %argv)
+                ret_type = i32_type;
+                total_params = 2;
+                param_types = malloc(sizeof(LLVMTypeRef) * 2);
+                param_types[0] = i32_type;  // argc
+                param_types[1] = i8_ptr_ptr_type;  // argv
             } else {
                 ret_type = type_to_llvm(cg, decl->fn_decl.ret_type);
                 total_params = decl->fn_decl.param_count;

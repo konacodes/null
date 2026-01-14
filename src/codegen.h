@@ -72,6 +72,10 @@ typedef struct {
     // String constants cache
     int string_count;
 
+    // argc/argv globals for CLI support
+    LLVMValueRef argc_global;
+    LLVMValueRef argv_global;
+
     bool had_error;
     char *error_msg;
 } Codegen;

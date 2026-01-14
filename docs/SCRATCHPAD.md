@@ -1,23 +1,25 @@
 # Scratchpad - Shared Agent Memory
 
 > **Last Updated:** 2026-01-14
-> **Current Phase:** 2 - M7 COMPLETE (Self-Hosting)
+> **Current Phase:** 2 - M7 COMPLETE (Self-Hosting) + CLI Support
 
 ---
 
-## Current Milestone: M7 - Self-Hosting Complete
+## Current Milestone: M7 - Self-Hosting Complete + CLI
 
-**Status:** ✓ COMPLETE - Full self-hosting achieved!
+**Status:** ✓ COMPLETE - Full self-hosting with CLI argument support!
 
 ### Achievement Summary:
-1. **nullc compiles itself** ✓ - mini.null (8215 lines LLVM IR, 121 functions)
-2. **Self-compiled nullc compiles hello.null** ✓ - Produces working executable
-3. **Output matches original** ✓ - MD5: 2d76634223ce233392abdf03379a7539
+1. **nullc compiles itself** ✓ - mini.null with CLI arg support
+2. **Self-compiled nullc compiles hello.null** ✓ - `./nullc2 examples/hello.null -o hello`
+3. **Output runs correctly** ✓ - `./hello` prints "Hello, world!"
+4. **All language tests pass** ✓ - 13/13 tests passing
 
 ### Key Files:
-- `nullc/mini.null` - Self-hosted compiler (2800+ lines)
-- `/tmp/claude/mini_v10` - Rust-compiled mini
-- `/tmp/claude/mini_self` - Self-compiled mini (bootstrapped!)
+- `nullc/mini.null` - Self-hosted compiler (2900+ lines) with CLI support
+- `src/codegen.c` - C compiler with argc/argv support for main
+- `nullc_bin` - C-compiled self-hosted compiler
+- `nullc2` - Self-compiled self-hosted compiler (bootstrapped!)
 
 ### Final Fixes for M7:
 1. **String escape lexer** - Handle backslash escapes in string scanning
@@ -102,33 +104,30 @@ typedef enum {
 
 ## Current Focus
 
-**Task:** M7 - Self-Hosting ✓ COMPLETE
+**Task:** M7 - Self-Hosting ✓ COMPLETE WITH CLI SUPPORT
 
-**Status:** Self-Hosting Achieved!
+**Status:** All Success Criteria Achieved!
 
-**What Works:**
+**Bootstrap Chain:**
 ```bash
-# Build mini.null with Rust compiler
-./null build nullc/mini.null -o /tmp/claude/mini_v10
+# Step 1: C compiler builds self-hosted compiler
+./null build nullc/mini.null -o nullc_bin
 
-# Self-compile: mini compiles itself
-cp nullc/mini.null /tmp/claude/aaa.null
-cd /tmp/claude && ./mini_v10  # Produces mini_out.ll
+# Step 2: Self-hosted compiler compiles itself
+./nullc_bin nullc/mini.null -o nullc2
 
-# Compile the self-compiled IR to binary
-llc -filetype=obj mini_out.ll -o mini_out.o
-gcc -no-pie mini_out.o -o mini_self -lm
+# Step 3: Self-compiled compiler compiles programs
+./nullc2 examples/hello.null -o hello
 
-# Test: self-compiled mini compiles hello.null
-echo 'fn main() -> i32 do print("Hello!") ret 0 end' > aaa.null
-./mini_self  # Produces mini_out.ll
-# Both Rust-compiled and self-compiled produce identical output!
+# Step 4: Compiled program runs correctly
+./hello  # Output: "Hello, world!"
 ```
 
 **Verified:**
-- Rust-compiled and self-compiled mini produce byte-identical LLVM IR
-- MD5 hash matches: 2d76634223ce233392abdf03379a7539
-- Full bootstrap chain working
+- Full bootstrap chain working with CLI arguments
+- Self-compiled nullc2 produces working executables
+- All 13 language tests pass
+- Function return type handling fixed for pointer/i64/i32 returns
 
 ---
 
@@ -153,28 +152,66 @@ echo 'fn main() -> i32 do print("Hello!") ret 0 end' > aaa.null
 
 ### Language Tests (tests/lang/)
 ```
-arithmetic.null    PASS
-functions.null     PASS
-loops.null         PASS
-variables.null     PASS
-comparison.null    PASS
-control_flow.null  PASS
-structs.null       PASS
-arrays.null        PASS
-------------------------
-Total: 8/8 PASS
-```
-
-### Feature Tests (pending)
-```
-struct_return.null    NOT WRITTEN
-enum_basic.null       NOT WRITTEN
-dynamic_array.null    NOT WRITTEN
+arithmetic.null      PASS
+functions.null       PASS
+loops.null           PASS
+variables.null       PASS
+comparison.null      PASS
+control_flow.null    PASS
+structs.null         PASS
+arrays.null          PASS
+struct_return.null   PASS
+enum_basic.null      PASS
+enum_match.null      PASS
+mem_test.null        PASS
+string_test.null     PASS
+--------------------------
+Total: 13/13 PASS
 ```
 
 ---
 
 ## Session Log
+
+### Session N+4 (2026-01-14) - CLI Support + Function Return Type Fix
+**Full bootstrap chain with CLI arguments working!**
+
+**Problem Identified:**
+- Self-compiled nullc2 was segfaulting when trying to compile files
+- Root cause: mini.null hardcoded ALL function calls to return i32
+- This corrupted 64-bit pointers from functions like `get_argv`, `malloc`, `fopen`
+
+**Fixes Applied:**
+1. **C compiler argc/argv support** (`src/codegen.c`)
+   - Main function now receives `(i32 %argc, i8** %argv)`
+   - Global variables `@__nullc_argc` and `@__nullc_argv` store values
+   - Helper functions `get_argc()` and `get_argv(i64)` for access
+
+2. **Function return type handling** (`nullc/mini.null` lines ~1869-1950)
+   - Detect pointer-returning functions: `call ptr @name(...) + ptrtoint`
+   - Detect i64-returning functions: `call i64 @name(...)`
+   - Keep i32 for others: `call i32 @name(...) + sext`
+
+**Bootstrap Chain Verified:**
+```bash
+# C compiler builds mini.null → nullc_bin (53KB)
+./null build nullc/mini.null -o nullc_bin
+
+# nullc_bin self-compiles → nullc2 (53KB)
+./nullc_bin nullc/mini.null -o nullc2
+
+# nullc2 compiles hello.null → hello (16KB)
+./nullc2 examples/hello.null -o hello
+
+# hello runs correctly
+./hello  # "Hello, world!"
+```
+
+**Success Criteria Met:**
+1. ✅ `./nullc_bin nullc/mini.null -o nullc2` - nullc compiles itself
+2. ✅ `./nullc2 examples/hello.null -o hello` - compiled compiler works
+3. ✅ `./hello` prints "Hello, world!"
+4. ✅ All 13 language tests pass
 
 ### Session N+3 (2026-01-14) - M7 SELF-HOSTING COMPLETE 🎉
 **Major Achievement: null compiler compiles itself!**
