@@ -187,6 +187,16 @@ fn emit_module_header(cg :: Codegen) -> Codegen do
     cg = emit(cg, "target triple = \"x86_64-pc-linux-gnu\"")
     cg = emit_nl(cg)
     cg = emit_nl(cg)
+    cg = emit(cg, "; External function declarations")
+    cg = emit_nl(cg)
+    cg = emit(cg, "declare i32 @puts(i8*)")
+    cg = emit_nl(cg)
+    cg = emit_nl(cg)
+    cg = emit(cg, "; String constants")
+    cg = emit_nl(cg)
+    cg = emit(cg, "@.str.0 = private constant [14 x i8] c\"Hello, world!\\00\"")
+    cg = emit_nl(cg)
+    cg = emit_nl(cg)
     ret cg
 end
 
@@ -367,6 +377,18 @@ fn emit_call_void(cg :: Codegen, fn_name :: ptr<u8>) -> Codegen do
     cg = emit(cg, "call void @")
     cg = emit(cg, fn_name)
     cg = emit(cg, "()")
+    cg = emit_nl(cg)
+    ret cg
+end
+
+-- Emit call with i8* argument (for string)
+fn emit_call_with_str(cg :: Codegen, fn_name :: ptr<u8>, str_id :: i64) -> Codegen do
+    cg = emit_indent(cg)
+    cg = emit(cg, "call i32 @")
+    cg = emit(cg, fn_name)
+    cg = emit(cg, "(i8* getelementptr inbounds ([14 x i8], [14 x i8]* @.str.")
+    cg = emit_int(cg, str_id)
+    cg = emit(cg, ", i32 0, i32 0))")
     cg = emit_nl(cg)
     ret cg
 end

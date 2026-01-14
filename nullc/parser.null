@@ -398,6 +398,12 @@ struct ParseResult do
     node :: ptr<ASTNode>
 end
 
+-- Result for parsing multiple arguments
+struct MoreArgsResult do
+    p :: Parser
+    args :: NodeArray
+end
+
 -- Consume expected token or report error
 fn consume(p :: Parser, tok_type :: i64, msg :: ptr<u8>) -> Parser do
     let cur :: Token = p.current
@@ -503,21 +509,24 @@ fn parse_primary(p :: Parser) -> ParseResult do
 
             new_p = parser_advance(new_p)  -- consume '('
 
-            -- Skip arguments for now (TODO: parse args)
+            -- Parse arguments
+            let args :: NodeArray = node_array_new()
             let skip_tok :: Token = new_p.current
             if skip_tok.tok_type != TokenType::TOK_RPAREN do
                 -- Parse arguments as expressions separated by comma
-                let args :: NodeArray = node_array_new()
                 let arg :: ParseResult = parse_expression(new_p)
                 new_p = arg.p
                 args = node_array_push(args, arg.node)
 
                 -- Check for more arguments
-                let comma_tok :: Token = new_p.current
-                if comma_tok.tok_type == TokenType::TOK_COMMA do
-                    new_p = parse_more_args(new_p, args)
-                end
+                let more_res :: MoreArgsResult = parse_more_args(new_p, args)
+                new_p = more_res.p
+                args = more_res.args
             end
+
+            -- Store args to call node (data at 104, count at 112)
+            store_ptr(ptr_add(np, 104), args.data)
+            store_i64(ptr_add(np, 112), args.count)
 
             new_p = consume(new_p, TokenType::TOK_RPAREN, "Expected ')' after arguments")
             let res :: ParseResult = ParseResult { p = new_p, node = call }
@@ -577,16 +586,17 @@ fn parse_primary(p :: Parser) -> ParseResult do
 end
 
 -- Parse additional function arguments after the first
-fn parse_more_args(p :: Parser, args :: NodeArray) -> Parser do
+fn parse_more_args(p :: Parser, args :: NodeArray) -> MoreArgsResult do
     let tok :: Token = p.current
     if tok.tok_type == TokenType::TOK_COMMA do
-        p = parser_advance(p)  -- consume ','
+        p = parser_advance(p)
         let arg :: ParseResult = parse_expression(p)
         p = arg.p
         args = node_array_push(args, arg.node)
         ret parse_more_args(p, args)
     end
-    ret p
+    let res :: MoreArgsResult = MoreArgsResult { p = p, args = args }
+    ret res
 end
 
 -- Parse unary expression

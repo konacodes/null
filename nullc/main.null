@@ -33,13 +33,34 @@ fn get_call_name(call_node :: ptr<u8>) -> ptr<u8> do
     ret name
 end
 
--- Emit an expression (only handles calls for now)
+-- Check if a call has string literal argument
+fn call_has_string_arg(call_node :: ptr<u8>) -> bool do
+    -- args.data at offset 104, args.count at offset 112
+    let args_count :: i64 = load_i64(ptr_add(call_node, 112))
+    if args_count > 0 do
+        let args_data :: ptr<u8> = load_ptr(ptr_add(call_node, 104))
+        let first_arg :: ptr<u8> = load_ptr(args_data)
+        let arg_kind :: i64 = load_i64(first_arg)
+        -- NODE_LITERAL_STRING = 18
+        if arg_kind == 18 do
+            ret true
+        end
+    end
+    ret false
+end
+
+-- Emit an expression (handles calls)
 fn emit_expr(cg :: Codegen, expr :: ptr<u8>) -> Codegen do
     let kind :: i64 = load_i64(expr)
     -- NODE_CALL = 23
     if kind == 23 do
         let name :: ptr<u8> = get_call_name(expr)
-        cg = emit_call_void(cg, name)
+        if call_has_string_arg(expr) do
+            -- Use hardcoded string for now (str id 0)
+            cg = emit_call_with_str(cg, name, 0)
+        else do
+            cg = emit_call_void(cg, name)
+        end
     end
     ret cg
 end
@@ -155,7 +176,7 @@ fn main() -> i32 do
     print("=== nullc Compiler ===")
     println()
 
-    let source :: ptr<u8> = file_read_all("/tmp/claude/test_extern.null")
+    let source :: ptr<u8> = file_read_all("/tmp/claude/test_hello.null")
     let null_ptr :: ptr<u8> = 0
     if source == null_ptr do
         print("Failed to read")
@@ -163,7 +184,7 @@ fn main() -> i32 do
         ret 1
     end
 
-    let f :: ptr<u8> = file_open_read("/tmp/claude/test_extern.null")
+    let f :: ptr<u8> = file_open_read("/tmp/claude/test_hello.null")
     let size :: i64 = file_size(f)
     file_close(f)
     print("Read ")
